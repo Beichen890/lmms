@@ -403,24 +403,20 @@ void ProjectRenderer::finalizeCapturedRender()
 
 	if (encoded)
 	{
-		QFile encodedFile(m_finalOutput);
-		if (encodedFile.open(QIODevice::ReadOnly))
+		SF_INFO info{};
+		SNDFILE* sf = sf_open(QFile::encodeName(m_finalOutput).constData(), SFM_READ, &info);
+		if (sf != nullptr)
 		{
-			SF_INFO info{};
-			SNDFILE* sf = sf_open_fd(encodedFile.handle(), SFM_READ, &info, false);
-			if (sf != nullptr)
+			const auto frames = static_cast<sf_count_t>(info.frames);
+			if (frames > 0 && info.channels > 0)
 			{
-				const auto frames = static_cast<sf_count_t>(info.frames);
-				if (frames > 0 && info.channels > 0)
-				{
-					statsSamples.resize(static_cast<std::size_t>(frames) *
-						static_cast<std::size_t>(info.channels));
-					sf_readf_float(sf, statsSamples.data(), frames);
-					statsChannels = info.channels;
-					statsSampleRate = info.samplerate;
-				}
-				sf_close(sf);
+				statsSamples.resize(static_cast<std::size_t>(frames) *
+					static_cast<std::size_t>(info.channels));
+				sf_readf_float(sf, statsSamples.data(), frames);
+				statsChannels = info.channels;
+				statsSampleRate = info.samplerate;
 			}
+			sf_close(sf);
 		}
 	}
 
