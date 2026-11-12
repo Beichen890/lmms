@@ -791,6 +791,7 @@ int runPluginsJsonAction(const QString& typeFilter)
 
 	QJsonArray instruments;
 	QJsonArray effects;
+	QJsonArray other;
 
 	if (includeInstruments || includeEffects)
 	{
@@ -830,6 +831,18 @@ int runPluginsJsonAction(const QString& typeFilter)
 				plugin["parameters"] = parameters;
 				if (!note.isEmpty()) { plugin["note"] = note; }
 				effects.append(plugin);
+			}
+
+			// Libraries and tools (Carla hosts, VST/LV2 helpers, ...) are
+			// native plugins too, but have no instrument/effect parameters.
+			if (filter == "all" && descriptor->type != Plugin::Type::Instrument
+				&& descriptor->type != Plugin::Type::Effect)
+			{
+				QJsonObject plugin;
+				plugin["name"] = name;
+				plugin["displayName"] = QString::fromUtf8(descriptor->displayName);
+				plugin["type"] = static_cast<int>(descriptor->type);
+				other.append(plugin);
 			}
 		}
 	}
@@ -875,6 +888,7 @@ int runPluginsJsonAction(const QString& typeFilter)
 	result["version"] = QString::fromUtf8(LMMS_VERSION);
 	result["instruments"] = instruments;
 	result["effects"] = effects;
+	result["other"] = other;
 	result["ladspa"] = ladspa;
 	result["vst"] = vst;
 
