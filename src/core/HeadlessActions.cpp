@@ -23,7 +23,7 @@
 #include <QMap>
 #include <QSet>
 #include <QStringList>
-#include <QTemporaryFile>
+#include <QTemporaryDir>
 #include <QTextStream>
 #include <QtGlobal>
 
@@ -129,14 +129,16 @@ QList<AutomatableModel::ModelMetadata> collectMetadata(const std::function<void(
 
 QString buildSavedProject(Song* song, bool canonical, bool minimal, QString* error)
 {
-	QTemporaryFile temp(QDir::tempPath() + "/lmms-save-XXXXXX.mmp");
-	if (!temp.open())
+	// Do not pre-create the target: LMMS saves by renaming a temporary file
+	// over the destination, which fails on Windows when the destination
+	// already exists. A temporary directory gives us a fresh path.
+	QTemporaryDir tempDir(QDir::tempPath() + "/lmms-save-XXXXXX");
+	if (!tempDir.isValid())
 	{
-		if (error) { *error = "could not create a temporary file for saving"; }
+		if (error) { *error = "could not create a temporary directory for saving"; }
 		return QString();
 	}
-	const QString tempPath = temp.fileName();
-	temp.close();
+	const QString tempPath = tempDir.filePath("project.mmp");
 
 	if (!song->saveProjectFile(tempPath))
 	{
