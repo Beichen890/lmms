@@ -353,7 +353,7 @@ jobs:
           CCACHE_MAXSIZE: 500M
   publish-windows-x64:
     name: publish-windows-x64
-    needs: mingw64
+    needs: mingw
     runs-on: ubuntu-latest
     permissions:
       contents: write
