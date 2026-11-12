@@ -38,6 +38,34 @@
 namespace lmms
 {
 
+bool AutomatableModel::s_metadataRegistryEnabled = false;
+QList<AutomatableModel::ModelMetadata> AutomatableModel::s_metadataRegistry;
+
+
+void AutomatableModel::setMetadataRegistryEnabled(bool enabled)
+{
+	s_metadataRegistryEnabled = enabled;
+}
+
+
+bool AutomatableModel::isMetadataRegistryEnabled()
+{
+	return s_metadataRegistryEnabled;
+}
+
+
+void AutomatableModel::clearMetadataRegistry()
+{
+	s_metadataRegistry.clear();
+}
+
+
+QList<AutomatableModel::ModelMetadata> AutomatableModel::metadataRegistry()
+{
+	return s_metadataRegistry;
+}
+
+
 long AutomatableModel::s_periodCounter = 0;
 
 
@@ -102,6 +130,11 @@ bool AutomatableModel::mustQuoteName(const QString& name)
 
 void AutomatableModel::saveSettings( QDomDocument& doc, QDomElement& element, const QString& name )
 {
+	if (s_metadataRegistryEnabled)
+	{
+		s_metadataRegistry.append(ModelMetadata{name, this});
+	}
+
 	bool mustQuote = mustQuoteName(name);
 
 	if( isAutomated() || m_scaleType != ScaleType::Linear )

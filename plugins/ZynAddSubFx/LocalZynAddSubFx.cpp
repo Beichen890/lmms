@@ -26,6 +26,8 @@
 
 #include <ctime>
 
+#include <QDebug>
+
 #include "lmmsconfig.h"
 
 #ifdef LMMS_BUILD_WIN32
@@ -142,13 +144,20 @@ void LocalZynAddSubFx::loadXML( const std::string & _filename )
 {
 	char * f = strdup( _filename.c_str() );
 
+	int result = 0;
 	{
 		const auto lock = std::lock_guard{m_master->mutex};
 		m_master->defaults();
-		m_master->loadXML( f );
+		result = m_master->loadXML( f );
 	}
 
 	m_master->applyparameters();
+
+	if( result != 0 )
+	{
+		qWarning() << "ZynAddSubFx: failed to load master state (code"
+					<< result << ") from" << QString::fromStdString( _filename );
+	}
 
 #ifdef LMMS_BUILD_WIN32
 	_wunlink(toWString(_filename).get());
@@ -166,13 +175,21 @@ void LocalZynAddSubFx::loadPreset( const std::string & _filename, int _part )
 {
 	char * f = strdup( _filename.c_str() );
 
+	int result = 0;
 	{
 		const auto lock = std::lock_guard{m_master->mutex};
 		m_master->part[_part]->defaultsinstrument();
-		m_master->part[_part]->loadXMLinstrument( f );
+		result = m_master->part[_part]->loadXMLinstrument( f );
 	}
 
 	m_master->applyparameters();
+
+	if( result != 0 )
+	{
+		qWarning() << "ZynAddSubFx: failed to load instrument preset (code"
+					<< result << ") into part" << _part << "from"
+					<< QString::fromStdString( _filename );
+	}
 
 	free( f );
 }

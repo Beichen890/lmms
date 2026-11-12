@@ -94,6 +94,12 @@ signals:
 	void sampleUpdated();
 
 private:
+	//! Tries to locate a sample referenced by \p src which could not be
+	//! resolved directly. Searches the project directory and the user/factory
+	//! sample libraries and returns a prefixed ("local:", "usersample:",
+	//! "factorysample:") path, or an empty string if nothing was found.
+	QString resolveSamplePath( const QString & src ) const;
+
 	Sample m_sample;
 
 	FloatModel m_ampModel;

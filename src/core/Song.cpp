@@ -63,6 +63,36 @@ namespace lmms
 tick_t TimePos::s_ticksPerBar = DefaultTicksPerBar;
 
 
+namespace
+{
+	//! Convert legacy HiddenAutomation tracks (type 6) inside a track container
+	//! to regular Automation tracks (type 5) in the in-memory project DOM.
+	//! Hidden automation tracks are not added to a track container's track list,
+	//! so a project that stored one in a track container would otherwise be
+	//! silently ignored during rendering. The user's file is not modified; the
+	//! conversion only affects the loaded project and is written out on save.
+	void upgradeHiddenAutomationTracks(QDomElement& trackContainer)
+	{
+		const auto hiddenAutomation = static_cast<int>(Track::Type::HiddenAutomation);
+		const auto automation = static_cast<int>(Track::Type::Automation);
+		const auto tracks = trackContainer.elementsByTagName(QStringLiteral("track"));
+		for (int i = 0; i < tracks.count(); ++i)
+		{
+			auto trackElement = tracks.at(i).toElement();
+			if (trackElement.attribute(QStringLiteral("type")).toInt() != hiddenAutomation)
+			{
+				continue;
+			}
+
+			qWarning() << "Song: converting hidden automation track"
+				<< trackElement.attribute(QStringLiteral("name"))
+				<< "to a regular automation track";
+			trackElement.setAttribute(QStringLiteral("type"), automation);
+		}
+	}
+}
+
+
 
 Song::Song() :
 	TrackContainer(),
@@ -94,6 +124,9 @@ Song::Song() :
 	m_loopMidiClip( false ),
 	m_loopRenderCount(1),
 	m_loopRenderRemaining(1),
+	m_exportRangeEnabled(false),
+	m_exportRangeStart(0),
+	m_exportRangeEnd(-1),
 	m_oldAutomatedValues()
 {
 	connect( &m_tempoModel, SIGNAL(dataChanged()),
@@ -713,6 +746,41 @@ void Song::stop()
 
 
 
+void Song::setExportRange(int startTicks, int endTicks)
+{
+	if (startTicks < 0)
+	{
+		qWarning() << "Song::setExportRange: negative start tick" << startTicks
+			<< "clamped to 0";
+		startTicks = 0;
+	}
+
+	m_exportRangeStart = startTicks;
+	m_exportRangeEnd = endTicks;
+	m_exportRangeEnabled = true;
+}
+
+
+
+
+void Song::clearExportRange()
+{
+	m_exportRangeEnabled = false;
+	m_exportRangeStart = 0;
+	m_exportRangeEnd = -1;
+}
+
+
+
+
+bool Song::hasExportRange() const
+{
+	return m_exportRangeEnabled;
+}
+
+
+
+
 void Song::startExport()
 {
 	stop();
@@ -722,7 +790,38 @@ void Song::startExport()
 
 	auto& timeline = getTimeline(PlayMode::Song);
 
-	if (m_renderBetweenMarkers)
+	if (m_exportRangeEnabled)
+	{
+		// An explicit export range takes precedence over loop rendering so that
+		// nothing outside [start, end) is rendered. A negative end tick means
+		// "until the end of the project", matching the default whole-song
+		// export which also includes a trailing bar.
+		m_exportSongBegin = TimePos(std::max(0, m_exportRangeStart));
+		if (m_exportRangeEnd < 0)
+		{
+			m_exportSongEnd = TimePos(m_length, 0);
+			m_exportSongEnd += TimePos(1, 0);
+		}
+		else
+		{
+			m_exportSongEnd = TimePos(m_exportRangeEnd);
+		}
+
+		if (m_exportSongEnd <= m_exportSongBegin)
+		{
+			qWarning() << "Song::startExport: export range end"
+				<< m_exportSongEnd.getTicks() << "is not after start"
+				<< m_exportSongBegin.getTicks() << "- extending by one bar";
+			m_exportSongEnd = m_exportSongBegin;
+			m_exportSongEnd += TimePos(1, 0);
+		}
+
+		m_exportLoopBegin = m_exportSongBegin;
+		m_exportLoopEnd = m_exportSongBegin;
+
+		timeline.setTicks(m_exportSongBegin.getTicks());
+	}
+	else if (m_renderBetweenMarkers)
 	{
 		m_exportSongBegin = m_exportLoopBegin = timeline.loopBegin();
 		m_exportSongEnd = m_exportLoopEnd = timeline.loopEnd();
@@ -755,7 +854,7 @@ void Song::startExport()
 
 	m_exportEffectiveLength = (m_exportLoopBegin - m_exportSongBegin) + (m_exportLoopEnd - m_exportLoopBegin) 
 		* m_loopRenderCount + (m_exportSongEnd - m_exportLoopEnd);
-	m_loopRenderRemaining = m_loopRenderCount;
+	m_loopRenderRemaining = m_exportRangeEnabled ? 1 : m_loopRenderCount;
 
 	playSong();
 
@@ -1119,7 +1218,9 @@ void Song::loadProject( const QString & fileName )
 		{
 			if( node.nodeName() == "trackcontainer" )
 			{
-				( (JournallingObject *)( this ) )->restoreState( node.toElement() );
+				auto trackContainer = node.toElement();
+				upgradeHiddenAutomationTracks(trackContainer);
+				( (JournallingObject *)( this ) )->restoreState( trackContainer );
 			}
 			else if( node.nodeName() == "controllers" )
 			{

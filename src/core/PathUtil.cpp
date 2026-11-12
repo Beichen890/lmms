@@ -1,5 +1,6 @@
 #include "PathUtil.h"
 
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 
@@ -179,9 +180,49 @@ namespace lmms::PathUtil
 			if (error) { *error = false; }
 			return path;
 		}
+		// Prefix-less relative paths are resolved against the project directory
+		// (the directory containing the project file) first, so that projects
+		// with local samples render the same regardless of the current working
+		// directory.
+		const Base originalBase = baseLookup(path);
+		bool localDirError = false;
+		const QString localDir = baseLocation(Base::LocalDir, &localDirError);
+		const QString projectCandidate = localDir + path;
+		if (originalBase == Base::Absolute && !localDirError
+			&& QFileInfo(projectCandidate).exists())
+		{
+			if (error) { *error = false; }
+			return QFileInfo(projectCandidate).absoluteFilePath();
+		}
+
 		//Next, handle old relative paths with no prefix
 		QString upgraded = oldRelativeUpgrade(path);
 		Base base = baseLookup(upgraded);
+
+		if (originalBase == Base::Absolute && base == Base::Absolute)
+		{
+			// The file was not found in the project directory or in any of the
+			// known resource directories.
+			if (!localDirError)
+			{
+				qWarning() << "PathUtil::toAbsolute: project-local file not found:"
+					<< projectCandidate;
+			}
+
+			// Fall back to the working directory for backwards compatibility,
+			// but make the fallback visible instead of silently muting the
+			// project when rendered from a different directory.
+			QFileInfo cwdInfo(path);
+			if (cwdInfo.exists())
+			{
+				qWarning() << "PathUtil::toAbsolute: unresolved relative path" << path
+					<< "- falling back to current working directory:"
+					<< cwdInfo.absoluteFilePath();
+				if (error) { *error = false; }
+				return cwdInfo.absoluteFilePath();
+			}
+		}
+
 		return baseLocation(base, error) + upgraded.remove(0, basePrefix(base).length());
 	}
 
@@ -206,6 +247,22 @@ namespace lmms::PathUtil
 
 		QString path = serializePath(input);
 		QFileInfo inputFileInfo = QFileInfo(path);
+
+		// Preserve the previous behaviour for prefix-less paths that only exist
+		// in the project directory: keep them relative instead of turning them
+		// into absolute paths. Callers that want an explicit "local:" prefix
+		// can pass allowLocal = true.
+		if (!allowLocal && !inputFileInfo.isAbsolute() && baseLookup(path) == Base::Absolute)
+		{
+			bool localDirError = false;
+			const QString localDir = baseLocation(Base::LocalDir, &localDirError);
+			if (!localDirError && baseLookup(oldRelativeUpgrade(path)) == Base::Absolute
+				&& QFileInfo(localDir + path).exists())
+			{
+				return path;
+			}
+		}
+
 		QString absolutePath = inputFileInfo.isAbsolute() ? path : toAbsolute(path);
 
 		Base shortestBase = Base::Absolute;

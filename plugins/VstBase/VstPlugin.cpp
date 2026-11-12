@@ -179,6 +179,8 @@ VstPlugin::VstPlugin( const QString & _plugin ) :
 		break;
 #endif
 	default:
+		qWarning() << "VstPlugin:" << m_plugin
+			<< "- unsupported plugin binary format (only 64-bit VST2 is supported)";
 		m_failed = true;
 		return;
 	}
@@ -214,6 +216,9 @@ void VstPlugin::tryLoad( const QString &remoteVstPluginExecutable )
 	waitForHostInfoGotten();
 	if( failed() )
 	{
+		qWarning() << "VstPlugin:" << m_plugin
+			<< "- could not start remote VST host executable"
+			<< remoteVstPluginExecutable;
 		return;
 	}
 
@@ -249,11 +254,71 @@ void VstPlugin::loadSettings( const QDomElement & _this )
 	}
 
 	const int num_params = _this.attribute( "numparams" ).toInt();
-	// if it exists try to load settings chunk
+
+	// Optional: load the preset (and with it the chunk) directly from a
+	// .fxp/.fxb file. This is useful for projects generated outside of LMMS
+	// (e.g. by headless tools), which cannot produce a base64 chunk.
+	QString chunkFile;
+	if( _this.hasAttribute( "chunkfile" ) )
+	{
+		chunkFile = _this.attribute( "chunkfile" );
+	}
+	else if( _this.hasAttribute( "preset" ) )
+	{
+		chunkFile = _this.attribute( "preset" );
+	}
+	else
+	{
+		const QDomElement chunkElement = _this.firstChildElement( "chunk" );
+		if( !chunkElement.isNull() )
+		{
+			chunkFile = chunkElement.attribute( "file" );
+		}
+		if( chunkFile.isEmpty() )
+		{
+			const QDomElement fileElement = _this.firstChildElement( "chunkfile" );
+			if( !fileElement.isNull() )
+			{
+				chunkFile = fileElement.text().trimmed();
+			}
+		}
+	}
+
+	// Inline chunks (the format written by LMMS) take precedence over files.
+	const QDomElement chunkElement = _this.firstChildElement( "chunk" );
+	QByteArray inlineChunk;
 	if( _this.hasAttribute( "chunk" ) )
 	{
-		loadChunk( QByteArray::fromBase64(
-				_this.attribute( "chunk" ).toUtf8() ) );
+		inlineChunk = QByteArray::fromBase64(
+				_this.attribute( "chunk" ).toUtf8() );
+	}
+	else if( !chunkElement.isNull() && !chunkElement.text().trimmed().isEmpty()
+			&& !chunkElement.hasAttribute( "file" ) )
+	{
+		inlineChunk = QByteArray::fromBase64(
+				chunkElement.text().trimmed().toUtf8() );
+	}
+
+	if( !inlineChunk.isEmpty() )
+	{
+		loadChunk( inlineChunk );
+	}
+	else if( !chunkFile.isEmpty() )
+	{
+		const QString resolved = PathUtil::toAbsolute( chunkFile );
+		if( QFileInfo::exists( resolved ) )
+		{
+			lock();
+			sendMessage( message( IdLoadPresetFile ).addString(
+				QSTR_TO_STDSTR( QDir::toNativeSeparators( resolved ) ) ) );
+			waitForMessage( IdLoadPresetFile, true );
+			unlock();
+		}
+		else
+		{
+			qWarning() << "VST plugin" << m_plugin
+				<< ": preset file not found:" << resolved;
+		}
 	}
 	else if( num_params > 0 )
 	{
@@ -266,6 +331,12 @@ void VstPlugin::loadSettings( const QDomElement & _this )
 			dump[key] = _this.attribute( key );
 		}
 		setParameterDump( dump );
+	}
+	else
+	{
+		qWarning() << "VST plugin" << m_plugin
+			<< ": project contains no chunk, preset file or parameters;"
+			" using the plugin's default state";
 	}
 }
 

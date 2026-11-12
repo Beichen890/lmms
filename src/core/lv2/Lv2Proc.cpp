@@ -43,9 +43,9 @@
 #include "Lv2Manager.h"
 #include "Lv2Ports.h"
 #include "Lv2Evbuf.h"
+#include "Lv2ProcSuspender.h"
 #include "MidiEvent.h"
 #include "MidiEventToByteSeq.h"
-#include "NoCopyNoMove.h"
 
 
 namespace lmms
@@ -165,27 +165,6 @@ Plugin::Type Lv2Proc::check(const LilvPlugin *plugin,
 			? Plugin::Type::Effect
 			: Plugin::Type::Instrument;
 }
-
-
-
-
-class Lv2ProcSuspender : NoCopyNoMove
-{
-public:
-	Lv2ProcSuspender(Lv2Proc* proc)
-		: m_proc(proc)
-		, m_wasActive(proc->m_instance)
-	{
-		if (m_wasActive) { m_proc->shutdownPlugin(); }
-	}
-	~Lv2ProcSuspender()
-	{
-		if (m_wasActive) { m_proc->initPlugin(); }
-	}
-private:
-	Lv2Proc* const m_proc;
-	const bool m_wasActive;
-};
 
 
 

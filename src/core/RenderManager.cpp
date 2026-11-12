@@ -25,6 +25,8 @@
 #include <QDir>
 #include <QRegularExpression>
 
+#include <algorithm>
+
 #include "RenderManager.h"
 
 #include "PatternStore.h"
@@ -35,10 +37,12 @@ namespace lmms
 {
 
 RenderManager::RenderManager(
-	const OutputSettings& outputSettings, ProjectRenderer::ExportFileFormat fmt, QString outputPath)
+	const OutputSettings& outputSettings, ProjectRenderer::ExportFileFormat fmt, QString outputPath,
+	const RenderOptions& options)
 	: m_outputSettings(outputSettings)
 	, m_format(fmt)
 	, m_outputPath(outputPath)
+	, m_options(options)
 {
 	Engine::audioEngine()->storeAudioDevice();
 }
@@ -58,9 +62,51 @@ void RenderManager::abortProcessing()
 	restoreMutedState();
 }
 
+void RenderManager::accumulateStats(const RenderStats& stats)
+{
+	if (!stats.valid) { return; }
+
+	if (!m_renderingTracks)
+	{
+		const int trackCount = m_stats.tracks;
+		m_stats = stats;
+		m_stats.tracks = trackCount;
+		m_stats.warnings = m_options.warnings;
+		for (const auto& w : stats.warnings)
+		{
+			if (!m_stats.warnings.contains(w)) { m_stats.warnings << w; }
+		}
+		return;
+	}
+
+	// Aggregate per-track output.
+	m_stats.valid = true;
+	++m_stats.tracks;
+	for (const auto& w : m_options.warnings)
+	{
+		if (!m_stats.warnings.contains(w)) { m_stats.warnings << w; }
+	}
+	m_stats.duration = std::max(m_stats.duration, stats.duration);
+	m_stats.peak = std::max(m_stats.peak, stats.peak);
+	m_stats.rms = std::max(m_stats.rms, stats.rms);
+	m_stats.silent = m_stats.silent && stats.silent;
+	m_stats.file = m_outputPath;
+	m_stats.format = stats.format;
+	m_stats.sampleRate = stats.sampleRate;
+	for (const auto& w : stats.warnings)
+	{
+		if (!m_stats.warnings.contains(w)) { m_stats.warnings << w; }
+	}
+}
+
+
 // Called to render each new track when rendering tracks individually.
 void RenderManager::renderNextTrack()
 {
+	if (m_activeRenderer)
+	{
+		accumulateStats(m_activeRenderer->stats());
+	}
 	m_activeRenderer.reset();
 
 	if (m_tracksToRender.empty())
@@ -91,6 +137,8 @@ void RenderManager::renderNextTrack()
 // Render the song into individual tracks
 void RenderManager::renderTracks()
 {
+	m_renderingTracks = true;
+
 	const TrackContainer::TrackList& tl = Engine::getSong()->tracks();
 
 	// find all currently unnmuted tracks -- we want to render these.
@@ -129,12 +177,34 @@ void RenderManager::renderTracks()
 // Render the song into a single track
 void RenderManager::renderProject()
 {
+	m_renderingTracks = false;
+
+	// Count the tracks that participate in the mix for the JSON report.
+	int tracks = 0;
+	for (const auto& tk : Engine::getSong()->tracks())
+	{
+		const auto type = tk->type();
+		if (type == Track::Type::Instrument || type == Track::Type::Sample ||
+			type == Track::Type::Pattern)
+		{
+			++tracks;
+		}
+	}
+	m_stats.tracks = tracks;
+
 	render( m_outputPath );
 }
 
 void RenderManager::render(QString outputPath)
 {
-	m_activeRenderer = std::make_unique<ProjectRenderer>(m_outputSettings, m_format, outputPath);
+	RenderPostProcessOptions postProcess;
+	postProcess.capture = m_options.json || m_options.tailSeconds > 0.0 || m_options.normalize;
+	postProcess.tailSeconds = m_options.tailSeconds;
+	postProcess.normalize = m_options.normalize;
+	postProcess.normalizeDb = m_options.normalizeDb;
+
+	m_activeRenderer = std::make_unique<ProjectRenderer>(
+		m_outputSettings, m_format, outputPath, postProcess);
 
 	if( m_activeRenderer->isReady() )
 	{
@@ -152,6 +222,7 @@ void RenderManager::render(QString outputPath)
 	else
 	{
 		qDebug( "Renderer failed to acquire a file device!" );
+		m_stats.warnings << QString("could not open output file: %1").arg(outputPath);
 		renderNextTrack();
 	}
 }

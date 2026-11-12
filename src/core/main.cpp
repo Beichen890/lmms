@@ -29,12 +29,16 @@
 
 #include <QDebug>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLocale>
 #include <QTimer>
 #include <QTranslator>
 #include <QApplication>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QStringList>
 #include <QTextStream>
 
 #ifdef LMMS_BUILD_WIN32
@@ -70,6 +74,16 @@
 #include "ProjectRenderer.h"
 #include "RenderManager.h"
 #include "Song.h"
+
+#include "AudioBusHandle.h"
+#include "DummyEffect.h"
+#include "Effect.h"
+#include "EffectChain.h"
+#include "HeadlessActions.h"
+#include "HeadlessUtils.h"
+#include "Instrument.h"
+#include "InstrumentTrack.h"
+#include "PatternStore.h"
 
 #ifdef LMMS_DEBUG_FPE
 #include <fenv.h> // For feenableexcept
@@ -171,6 +185,19 @@ void printHelp()
 		"  makebundle <in> [out]                 Make a project bundle from the project\n"
 		"                                        file <in> saving the resulting bundle\n"
 		"                                        as <out>\n"
+		"  save <in> [out] [--canonical] [--minimal]\n"
+		"                                        Load <in> and save it again. Output goes\n"
+		"                                        to <out> or stdout if <out> is omitted.\n"
+		"  script <project> <file.json> [--out <out.mmp>] [--json]\n"
+		"                                        Apply a JSON instruction script and save\n"
+		"  normalize-basenote <project> [--out <out.mmp>] [--in-place] [--dry-run] [--json]\n"
+		"                                        Migrate legacy basenote 57 tracks to 69\n"
+		"  automation-add <project> --track <name> [--effect <index>]\n"
+		"      --param <name> --point <tick>:<value> --out <out.mmp>\n"
+		"                                        Add automation for a real model\n"
+		"  --plugins-json [--type instrument|effect|ladspa|vst|all]\n"
+		"                                        Print plugin parameter metadata as JSON\n"
+		"  --model-ids <project>                 Print automation model id mapping as JSON\n"
 		"\nGlobal options:\n"
 		"      --allowroot                Bypass root user startup check (use with\n"
 		"          caution).\n"
@@ -205,7 +232,14 @@ void printHelp()
 		"  -s, --samplerate <samplerate>  Specify output samplerate in Hz\n"
 		"          Range: 44100 (default) to 192000\n"
 		"          Possible values: 1, 2, 4, 8\n"
-		"          Default: 2\n\n",
+		"          Default: 2\n"
+		"      --from <tick|\"N bars\"|\"N beats\">\n"
+		"                                  Start of the rendered region\n"
+		"      --to <tick|\"N bars\"|\"N beats\">\n"
+		"                                  End of the rendered region\n"
+		"      --tail <seconds>            Append silence after the content\n"
+		"      --normalize <dBFS>          Normalize float PCM before encoding\n"
+		"      --json                      Print render statistics/errors as JSON\n\n",
 		LMMS_VERSION, LMMS_PROJECT_COPYRIGHT );
 }
 
@@ -243,6 +277,84 @@ int noInputFileError()
 }
 
 
+void printJsonError( const QString & code, const QString & message )
+{
+	QJsonObject error;
+	error["code"] = code;
+	error["message"] = message;
+
+	QJsonObject root;
+	root["ok"] = false;
+	root["error"] = error;
+
+	fprintf( stdout, "%s\n", QJsonDocument( root ).toJson( QJsonDocument::Compact ).constData() );
+	fflush( stdout );
+}
+
+
+int renderOptionError( bool json, const QString & code, const QString & message )
+{
+	if( json )
+	{
+		printJsonError( code, message );
+		return EXIT_FAILURE;
+	}
+	return usageError( message );
+}
+
+
+QStringList collectResourceWarnings()
+{
+	using namespace lmms;
+
+	QStringList warnings;
+
+	Song * song = Engine::getSong();
+	if( song->hasErrors() )
+	{
+		warnings.append( song->errorSummary().split( '\n', Qt::SkipEmptyParts ) );
+	}
+
+	auto scanContainer = [&warnings]( const TrackContainer::TrackList & tracks ) {
+		for( Track * track : tracks )
+		{
+			if( auto instrumentTrack = dynamic_cast<InstrumentTrack *>( track ) )
+			{
+				if( instrumentTrack->instrument() != nullptr &&
+					instrumentTrack->instrument()->nodeName() == "dummyinstrument" )
+				{
+					warnings << QString( "plugin-missing: track \"%1\" uses an unavailable instrument" )
+						.arg( track->name() );
+				}
+			}
+
+			AudioBusHandle * bus = nullptr;
+			if( auto instrumentTrack = dynamic_cast<InstrumentTrack *>( track ) )
+			{
+				bus = instrumentTrack->audioBusHandle();
+			}
+			if( bus != nullptr )
+			{
+				for( Effect * effect : bus->effects()->findChildren<Effect *>() )
+				{
+					if( dynamic_cast<DummyEffect *>( effect ) != nullptr )
+					{
+						warnings << QString( "plugin-missing: track \"%1\" uses an unavailable effect" )
+							.arg( track->name() );
+					}
+				}
+			}
+		}
+	};
+
+	scanContainer( song->tracks() );
+	scanContainer( Engine::patternStore()->tracks() );
+
+	warnings.removeDuplicates();
+	return warnings;
+}
+
+
 int main( int argc, char * * argv )
 {
 	using namespace lmms;
@@ -254,6 +366,28 @@ int main( int argc, char * * argv )
 	bool renderLoop = false;
 	bool renderTracks = false;
 	QString fileToLoad, fileToImport, renderOut, profilerOutputFile, configFile;
+
+	// Headless actions implemented on top of the model layer.
+	QString headlessAction;
+	QString saveIn, saveOut, scriptFile, scriptOut, pluginsType;
+	bool saveCanonical = false;
+	bool saveMinimal = false;
+	bool scriptJson = false;
+	QString actionProject, actionOut;
+	bool normalizeInPlace = false;
+	bool normalizeDryRun = false;
+	bool actionJson = false;
+	QString automationTrackName;
+	int automationEffect = -1;
+	QString automationParam;
+	QList<lmms::headless::AutomationPoint> automationPoints;
+
+	// render/rendertracks addition options
+	bool jsonRender = false;
+	QString fromSpec, toSpec;
+	double renderTail = 0.0;
+	bool renderNormalize = false;
+	double renderNormalizeDb = 0.0;
 
 	// first of two command-line parsing stages
 	for (int i = 1; i < argc; ++i)
@@ -278,6 +412,15 @@ int main( int argc, char * * argv )
 		{
 			coreOnly = true;
 			renderTracks = true;
+		}
+		else if (arg == "save" || arg == "script" || arg == "--plugins-json" ||
+			arg == "--model-ids" || arg == "normalize-basenote" || arg == "automation-add")
+		{
+			coreOnly = true;
+		}
+		else if (arg == "--json")
+		{
+			jsonRender = true;
 		}
 		else if (arg == "--allowroot")
 		{
@@ -468,6 +611,156 @@ int main( int argc, char * * argv )
 
 			return EXIT_SUCCESS;
 		}
+		else if( arg == "save" )
+		{
+			++i;
+			if( i == argc ) { return noInputFileError(); }
+			saveIn = QString::fromLocal8Bit( argv[i] );
+
+			if( i + 1 < argc && argv[i + 1][0] != '-' )
+			{
+				saveOut = QString::fromLocal8Bit( argv[++i] );
+			}
+
+			while( i + 1 < argc )
+			{
+				const QString flag = QString::fromLocal8Bit( argv[i + 1] );
+				if( flag == "--canonical" ) { saveCanonical = true; ++i; }
+				else if( flag == "--minimal" ) { saveMinimal = true; ++i; }
+				else { return usageError( QString( "Invalid option %1" ).arg( flag ) ); }
+			}
+
+			headlessAction = "save";
+			break;
+		}
+		else if( arg == "script" )
+		{
+			++i;
+			if( i == argc ) { return noInputFileError(); }
+			actionProject = QString::fromLocal8Bit( argv[i] );
+
+			++i;
+			if( i == argc ) { return usageError( "No script file specified" ); }
+			scriptFile = QString::fromLocal8Bit( argv[i] );
+
+			while( i + 1 < argc )
+			{
+				const QString flag = QString::fromLocal8Bit( argv[i + 1] );
+				if( flag == "--out" && i + 2 < argc )
+				{
+					scriptOut = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--json" ) { scriptJson = true; ++i; }
+				else { return usageError( QString( "Invalid option %1" ).arg( flag ) ); }
+			}
+
+			headlessAction = "script";
+			break;
+		}
+		else if( arg == "--plugins-json" )
+		{
+			pluginsType = "all";
+			while( i + 1 < argc )
+			{
+				const QString flag = QString::fromLocal8Bit( argv[i + 1] );
+				if( flag == "--type" && i + 2 < argc )
+				{
+					pluginsType = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else { return usageError( QString( "Invalid option %1" ).arg( flag ) ); }
+			}
+			headlessAction = "plugins-json";
+			break;
+		}
+		else if( arg == "--model-ids" )
+		{
+			++i;
+			if( i == argc ) { return noInputFileError(); }
+			actionProject = QString::fromLocal8Bit( argv[i] );
+			headlessAction = "model-ids";
+			break;
+		}
+		else if( arg == "normalize-basenote" )
+		{
+			++i;
+			if( i == argc ) { return noInputFileError(); }
+			actionProject = QString::fromLocal8Bit( argv[i] );
+
+			while( i + 1 < argc )
+			{
+				const QString flag = QString::fromLocal8Bit( argv[i + 1] );
+				if( flag == "--out" && i + 2 < argc )
+				{
+					actionOut = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--in-place" ) { normalizeInPlace = true; ++i; }
+				else if( flag == "--dry-run" ) { normalizeDryRun = true; ++i; }
+				else if( flag == "--json" ) { actionJson = true; ++i; }
+				else { return usageError( QString( "Invalid option %1" ).arg( flag ) ); }
+			}
+
+			headlessAction = "normalize-basenote";
+			break;
+		}
+		else if( arg == "automation-add" )
+		{
+			++i;
+			if( i == argc ) { return noInputFileError(); }
+			actionProject = QString::fromLocal8Bit( argv[i] );
+
+			while( i + 1 < argc )
+			{
+				const QString flag = QString::fromLocal8Bit( argv[i + 1] );
+				if( flag == "--track" && i + 2 < argc )
+				{
+					automationTrackName = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--effect" && i + 2 < argc )
+				{
+					bool ok = false;
+					automationEffect = QString( argv[i + 2] ).toInt( &ok );
+					if( !ok ) { return usageError( "--effect expects an integer index" ); }
+					i += 2;
+				}
+				else if( flag == "--param" && i + 2 < argc )
+				{
+					automationParam = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--point" && i + 2 < argc )
+				{
+					const QString point = QString::fromLocal8Bit( argv[i + 2] );
+					const int colon = point.indexOf( ':' );
+					if( colon <= 0 )
+					{
+						return usageError( "--point expects <tick>:<value>" );
+					}
+					bool okTick = false;
+					bool okValue = false;
+					const int tick = point.left( colon ).toInt( &okTick );
+					const double value = point.mid( colon + 1 ).toDouble( &okValue );
+					if( !okTick || !okValue )
+					{
+						return usageError( "--point expects <tick>:<value>" );
+					}
+					automationPoints.append( { tick, value } );
+					i += 2;
+				}
+				else if( flag == "--out" && i + 2 < argc )
+				{
+					actionOut = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else { return usageError( QString( "Invalid option %1" ).arg( flag ) ); }
+			}
+
+			headlessAction = "automation-add";
+			break;
+		}
 		else if( arg == "render" || arg == "--render" || arg == "-r" ||
 			arg == "rendertracks" || arg == "--rendertracks" )
 		{
@@ -532,7 +825,8 @@ int main( int argc, char * * argv )
 			}
 			else
 			{
-				return usageError( QString( "Invalid output format %1" ).arg( argv[i] ) );
+				return renderOptionError( jsonRender, "invalid-format",
+					QString( "Invalid output format %1" ).arg( argv[i] ) );
 			}
 		}
 		else if( arg == "--samplerate" || arg == "-s" )
@@ -649,6 +943,59 @@ int main( int argc, char * * argv )
 
 			configFile = QString::fromLocal8Bit( argv[i] );
 		}
+		else if( arg == "--json" )
+		{
+			jsonRender = true;
+		}
+		else if( arg == "--from" )
+		{
+			++i;
+			if( i == argc )
+			{
+				return renderOptionError( jsonRender, "invalid-argument", "No start position specified" );
+			}
+			fromSpec = QString::fromLocal8Bit( argv[i] );
+		}
+		else if( arg == "--to" )
+		{
+			++i;
+			if( i == argc )
+			{
+				return renderOptionError( jsonRender, "invalid-argument", "No end position specified" );
+			}
+			toSpec = QString::fromLocal8Bit( argv[i] );
+		}
+		else if( arg == "--tail" )
+		{
+			++i;
+			if( i == argc )
+			{
+				return renderOptionError( jsonRender, "invalid-argument", "No tail length specified" );
+			}
+			bool ok = false;
+			renderTail = QString( argv[i] ).toDouble( &ok );
+			if( !ok || renderTail < 0.0 )
+			{
+				return renderOptionError( jsonRender, "invalid-argument",
+					QString( "Invalid tail length %1" ).arg( argv[i] ) );
+			}
+		}
+		else if( arg == "--normalize" )
+		{
+			++i;
+			if( i == argc )
+			{
+				return renderOptionError( jsonRender, "invalid-argument", "No normalization level specified" );
+			}
+			bool ok = false;
+			renderNormalizeDb = QString( argv[i] ).toDouble( &ok );
+			if( !ok )
+			{
+				return renderOptionError( jsonRender, "invalid-argument",
+					QString( "Invalid normalization level %1" ).arg( argv[i] ) );
+			}
+			renderNormalize = true;
+		}
 		else
 		{
 			if( argv[i][0] == '-' )
@@ -659,9 +1006,28 @@ int main( int argc, char * * argv )
 		}
 	}
 
+	// Validate the requested output extension before loading the project so
+	// that a typo is reported as an invalid format instead of being silently
+	// replaced by the default WAV encoder.
+	if( !renderOut.isEmpty() && !renderTracks )
+	{
+		const QString suffix = QFileInfo( renderOut ).suffix();
+		if( !suffix.isEmpty() && !ProjectRenderer::isSupportedExtension( suffix ) )
+		{
+			return renderOptionError( jsonRender, "invalid-format",
+				QString( "Unsupported output format \".%1\"" ).arg( suffix ) );
+		}
+	}
+
 	// Test file argument before continuing
 	if( !fileToLoad.isEmpty() )
 	{
+		if( jsonRender && !renderOut.isEmpty() && !QFileInfo::exists( fileToLoad ) )
+		{
+			printJsonError( "project-not-found",
+				QString( "Project file not found: %1" ).arg( fileToLoad ) );
+			return EXIT_FAILURE;
+		}
 		fileCheck( fileToLoad );
 	}
 	else if( !fileToImport.isEmpty() )
@@ -703,7 +1069,46 @@ int main( int argc, char * * argv )
 	}
 #endif
 
+	if( !headlessAction.isEmpty() )
+	{
+		Engine::init( true );
+
+		int ret = EXIT_SUCCESS;
+		if( headlessAction == "save" )
+		{
+			ret = lmms::headless::runSaveAction( saveIn, saveOut, saveCanonical, saveMinimal );
+		}
+		else if( headlessAction == "script" )
+		{
+			ret = lmms::headless::runScriptAction( actionProject, scriptFile, scriptOut, scriptJson );
+		}
+		else if( headlessAction == "plugins-json" )
+		{
+			ret = lmms::headless::runPluginsJsonAction( pluginsType );
+		}
+		else if( headlessAction == "normalize-basenote" )
+		{
+			ret = lmms::headless::runNormalizeBaseNoteAction(
+				actionProject, actionOut, normalizeInPlace, normalizeDryRun, actionJson );
+		}
+		else if( headlessAction == "model-ids" )
+		{
+			ret = lmms::headless::runModelIdsAction( actionProject );
+		}
+		else if( headlessAction == "automation-add" )
+		{
+			ret = lmms::headless::runAutomationAddAction(
+				actionProject, automationTrackName, automationEffect, automationParam,
+				automationPoints, actionOut );
+		}
+
+		Engine::destroy();
+		delete app;
+		return ret;
+	}
+
 	bool destroyEngine = false;
+	RenderManager * renderManager = nullptr;
 
 	// if we have an output file for rendering, just render the song
 	// without starting the GUI
@@ -712,16 +1117,62 @@ int main( int argc, char * * argv )
 		Engine::init( true );
 		destroyEngine = true;
 
-		printf( "Loading project...\n" );
+		if( !jsonRender ) { printf( "Loading project...\n" ); }
 		Engine::getSong()->loadProject( fileToLoad );
 		if( Engine::getSong()->isEmpty() )
 		{
+			if( jsonRender )
+			{
+				printJsonError( "empty-project",
+					QString( "The project %1 is empty" ).arg( fileToLoad ) );
+				Engine::destroy();
+				delete app;
+				return EXIT_FAILURE;
+			}
 			printf("The project %s is empty, aborting!\n", fileToLoad.toUtf8().constData() );
 			exit( EXIT_FAILURE );
 		}
-		printf( "Done\n" );
+		if( !jsonRender ) { printf( "Done\n" ); }
 
 		Engine::getSong()->setExportLoop( renderLoop );
+
+		// Native export range. Tempo automation is integrated by the engine
+		// while rendering, so tick positions are exact even with tempo ramps.
+		if( !fromSpec.isEmpty() || !toSpec.isEmpty() )
+		{
+			int ticksPerBar = Engine::getSong()->ticksPerBar();
+			int beatsPerBar = Engine::getSong()->getTimeSigModel().getNumerator();
+			int start = 0;
+			int end = -1;
+			QString timeError;
+
+			if( !fromSpec.isEmpty() &&
+				!lmms::headless::parseTimeSpec( fromSpec, ticksPerBar, beatsPerBar, &start, &timeError ) )
+			{
+				if( jsonRender )
+				{
+					printJsonError( "invalid-argument", timeError );
+					Engine::destroy();
+					delete app;
+					return EXIT_FAILURE;
+				}
+				return usageError( timeError );
+			}
+			if( !toSpec.isEmpty() &&
+				!lmms::headless::parseTimeSpec( toSpec, ticksPerBar, beatsPerBar, &end, &timeError ) )
+			{
+				if( jsonRender )
+				{
+					printJsonError( "invalid-argument", timeError );
+					Engine::destroy();
+					delete app;
+					return EXIT_FAILURE;
+				}
+				return usageError( timeError );
+			}
+
+			Engine::getSong()->setExportRange( start, end );
+		}
 
 		// when rendering multiple tracks, renderOut is a directory
 		// otherwise, it is a file, so we need to append the file extension
@@ -731,14 +1182,21 @@ int main( int argc, char * * argv )
 				ProjectRenderer::getFileExtensionFromFormat(eff);
 		}
 
+		RenderOptions renderOptions;
+		renderOptions.json = jsonRender;
+		renderOptions.tailSeconds = renderTail;
+		renderOptions.normalize = renderNormalize;
+		renderOptions.normalizeDb = renderNormalizeDb;
+		renderOptions.warnings = collectResourceWarnings();
+
 		// create renderer
-		auto r = new RenderManager(os, eff, renderOut);
-		QCoreApplication::instance()->connect( r,
+		renderManager = new RenderManager(os, eff, renderOut, renderOptions);
+		QCoreApplication::instance()->connect( renderManager,
 				SIGNAL(finished()), SLOT(quit()));
 
 		// timer for progress-updates
-		auto t = new QTimer(r);
-		r->connect( t, SIGNAL(timeout()),
+		auto t = new QTimer(renderManager);
+		renderManager->connect( t, SIGNAL(timeout()),
 				SLOT(updateConsoleProgress()));
 		t->start( 200 );
 
@@ -750,11 +1208,11 @@ int main( int argc, char * * argv )
 		// start now!
 		if ( renderTracks )
 		{
-			r->renderTracks();
+			renderManager->renderTracks();
 		}
 		else
 		{
-			r->renderProject();
+			renderManager->renderProject();
 		}
 	}
 	else // otherwise, start the GUI
@@ -913,11 +1371,108 @@ int main( int argc, char * * argv )
 	}
 
 	const int ret = app->exec();
+
+	QString jsonReport;
+	int jsonExitCode = ret;
+
+	if( jsonRender && renderManager != nullptr )
+	{
+		RenderStats stats = renderManager->stats();
+
+		for( const QString & warning : collectResourceWarnings() )
+		{
+			if( !stats.warnings.contains( warning ) ) { stats.warnings << warning; }
+		}
+
+		bool missingSample = false;
+		bool missingPlugin = false;
+		for( const QString & warning : stats.warnings )
+		{
+			if( warning.contains( "sample not found", Qt::CaseInsensitive ) )
+			{
+				missingSample = true;
+			}
+			if( warning.contains( "plugin-missing", Qt::CaseInsensitive ) )
+			{
+				missingPlugin = true;
+			}
+		}
+
+		bool ok = stats.valid;
+		QString errorCode;
+		QString errorMessage;
+
+		if( !ok )
+		{
+			errorCode = "render-failed";
+			errorMessage = QString( "could not render %1" ).arg( renderOut );
+		}
+		else if( stats.silent && missingSample )
+		{
+			ok = false;
+			errorCode = "sample-missing";
+			errorMessage = "rendered audio is silent because samples could not be found";
+		}
+		else if( stats.silent && missingPlugin )
+		{
+			ok = false;
+			errorCode = "plugin-missing";
+			errorMessage = "rendered audio is silent because plugins could not be loaded";
+		}
+
+		QJsonObject root;
+		if( ok )
+		{
+			QJsonArray warnings;
+			for( const QString & warning : stats.warnings ) { warnings.append( warning ); }
+
+			root["ok"] = true;
+			root["file"] = stats.file;
+			root["format"] = stats.format;
+			root["sampleRate"] = stats.sampleRate;
+			root["duration"] = stats.duration;
+			root["peak"] = stats.peak;
+			root["rms"] = stats.rms;
+			root["silent"] = stats.silent;
+			root["tracks"] = stats.tracks;
+			root["warnings"] = warnings;
+			jsonExitCode = 0;
+		}
+		else
+		{
+			QJsonObject error;
+			error["code"] = errorCode;
+			error["message"] = errorMessage;
+
+			root["ok"] = false;
+			root["error"] = error;
+			if( !stats.warnings.isEmpty() )
+			{
+				QJsonArray warnings;
+				for( const QString & warning : stats.warnings ) { warnings.append( warning ); }
+				root["warnings"] = warnings;
+			}
+			jsonExitCode = EXIT_FAILURE;
+		}
+
+		jsonReport = QString::fromUtf8(
+			QJsonDocument( root ).toJson( QJsonDocument::Compact ) ) + "\n";
+	}
+
 	delete app;
 
 	if( destroyEngine )
 	{
 		Engine::destroy();
+	}
+
+	NotePlayHandleManager::free();
+
+	if( !jsonReport.isEmpty() )
+	{
+		fprintf( stdout, "%s", jsonReport.toUtf8().constData() );
+		fflush( stdout );
+		return jsonExitCode;
 	}
 
 	// ProjectRenderer::updateConsoleProgress() doesn't return line after render
@@ -935,9 +1490,6 @@ int main( int argc, char * * argv )
 		FreeConsole();
 	}
 #endif
-
-
-	NotePlayHandleManager::free();
 
 	return ret;
 }

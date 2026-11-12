@@ -25,7 +25,11 @@
 
 #include "Effect.h"
 
+#include <algorithm>
+
+#include <QDebug>
 #include <QDomElement>
+#include <QStringList>
 
 #include "AudioBuffer.h"
 #include "ConfigManager.h"
@@ -36,6 +40,45 @@
 
 namespace lmms
 {
+
+namespace
+{
+
+// Effect controls were historically saved under inconsistent element names
+// (e.g. "Eq", "crossoevereqcontrols", "dynamicsprocessor_controls"), while
+// external tools tend to write "<plugin>controls". Compare names forgivingly
+// so parameters are not dropped without any indication.
+QString normalizedControlNodeName(const QString& name)
+{
+	QString normalized = name.toLower();
+	normalized.remove(QLatin1Char('_'));
+	normalized.remove(QLatin1Char('-'));
+	return normalized;
+}
+
+//! Child elements of <effect> which never hold effect parameters
+bool isNonControlNodeName(const QString& name)
+{
+	static const QStringList ignored = {
+		"on", "wet", "mix", "autoquit", "chunk", "state", "sampledata", "key"
+	};
+	return ignored.contains(name.toLower());
+}
+
+bool looksLikeControlNodeName(const QString& name)
+{
+	const QString normalized = normalizedControlNodeName(name);
+	return normalized.endsWith(QStringLiteral("controls"))
+		|| normalized.endsWith(QStringLiteral("control"));
+}
+
+//! Only accept elements which actually carry something that could be a parameter
+bool hasControlContent(const QDomElement& element)
+{
+	return element.hasAttributes() || !element.firstChildElement().isNull();
+}
+
+} // namespace
 
 
 Effect::Effect( const Plugin::Descriptor * _desc,
@@ -72,20 +115,115 @@ void Effect::saveSettings( QDomDocument & _doc, QDomElement & _this )
 void Effect::loadSettings( const QDomElement & _this )
 {
 	m_enabledModel.loadSettings( _this, "on" );
-	m_wetDryModel.loadSettings( _this, "wet" );
+
+	// "mix" is a 0..1 alias for "wet" (-1..1). "wet" stays authoritative and
+	// is the only value written on save, so existing projects keep working.
+	const bool hasWet = _this.hasAttribute( "wet" )
+		|| !_this.firstChildElement( "wet" ).isNull();
+	const bool hasMix = _this.hasAttribute( "mix" )
+		|| !_this.firstChildElement( "mix" ).isNull();
+	if( !hasWet && hasMix )
+	{
+		m_wetDryModel.loadSettings( _this, "mix" );
+		// 0 (dry) .. 1 (wet), clamped to avoid negative values from the alias
+		m_wetDryModel.setValue( std::clamp( m_wetDryModel.value(), 0.0f, 1.0f ) );
+	}
+	else
+	{
+		m_wetDryModel.loadSettings( _this, "wet" );
+	}
+
 	m_autoQuitModel.loadSettings( _this, "autoquit" );
 
+	const QString expectedName = controls()->nodeName();
+	QDomElement controlsElement;
+	bool foundByName = false;
+	bool hasChildElement = false;
+
+	// First pass: exact, case-insensitive and separator-insensitive match
 	QDomNode node = _this.firstChild();
 	while( !node.isNull() )
 	{
-		if( node.isElement() )
+		const QDomElement element = node.toElement();
+		if( !element.isNull() )
 		{
-			if( controls()->nodeName() == node.nodeName() )
+			hasChildElement = true;
+			if( !isNonControlNodeName( element.nodeName() ) )
 			{
-				controls()->restoreState( node.toElement() );
+				const QString actualName = element.nodeName();
+				if( actualName == expectedName )
+				{
+					controlsElement = element;
+					foundByName = true;
+					break;
+				}
+				if( actualName.compare( expectedName, Qt::CaseInsensitive ) == 0
+					|| normalizedControlNodeName( actualName )
+						== normalizedControlNodeName( expectedName ) )
+				{
+					controlsElement = element;
+					foundByName = true;
+					break;
+				}
 			}
 		}
 		node = node.nextSibling();
+	}
+
+	// Second pass: accept any "<...>controls" node, e.g. <eqcontrols> for "Eq"
+	// or <crossovereqcontrols> for "crossoevereqcontrols"
+	if( controlsElement.isNull() )
+	{
+		node = _this.firstChild();
+		while( !node.isNull() )
+		{
+			const QDomElement element = node.toElement();
+			if( !element.isNull() && !isNonControlNodeName( element.nodeName() )
+				&& looksLikeControlNodeName( element.nodeName() ) )
+			{
+				controlsElement = element;
+				break;
+			}
+			node = node.nextSibling();
+		}
+	}
+
+	// Last resort: the first child element that can hold parameters. This
+	// covers external tools which use arbitrary names for the controls node.
+	if( controlsElement.isNull() )
+	{
+		node = _this.firstChild();
+		while( !node.isNull() )
+		{
+			const QDomElement element = node.toElement();
+			if( !element.isNull() && !isNonControlNodeName( element.nodeName() )
+				&& hasControlContent( element ) )
+			{
+				controlsElement = element;
+				break;
+			}
+			node = node.nextSibling();
+		}
+	}
+
+	if( !controlsElement.isNull() )
+	{
+		if( !foundByName )
+		{
+			qWarning( "Effect \"%s\": control node \"%s\" does not match the expected "
+				"node name \"%s\"; restoring its parameters anyway. Save the "
+				"project to use the expected name.",
+				descriptor()->name,
+				qUtf8Printable( controlsElement.nodeName() ),
+				qUtf8Printable( expectedName ) );
+		}
+		controls()->restoreState( controlsElement );
+	}
+	else if( hasChildElement )
+	{
+		qWarning( "Effect \"%s\": no control node named \"%s\" found; effect "
+			"parameters were not restored.",
+			descriptor()->name, qUtf8Printable( expectedName ) );
 	}
 }
 

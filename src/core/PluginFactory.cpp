@@ -29,6 +29,7 @@
 #include <QDir>
 #include <QLibrary>
 #include <QRegularExpression>
+#include <QSet>
 #include <memory>
 #include "lmmsconfig.h"
 
@@ -50,6 +51,29 @@ namespace lmms
 #else
 	QStringList nameFilters("lib*.so");
 #endif
+
+// Plugins that were renamed in LMMS 1.3. Projects created with older
+// versions (or hand-written XML) still refer to the legacy names, which
+// would otherwise fall back to a silent DummyPlugin.
+namespace
+{
+
+struct PluginAlias
+{
+	const char* legacyName;
+	const char* currentName;
+};
+
+constexpr PluginAlias s_pluginAliases[] =
+{
+	// "papu" is the legacy name of the GameBoy APU instrument, which is
+	// called "freeboy" since LMMS 0.4 (see DataFile::upgrade_1_3_0()).
+	{ "opl2", "opulenz" },
+	{ "papu", "freeboy" },
+	{ "spectrumanalyzer", "analyzer" },
+};
+
+} // namespace
 
 std::unique_ptr<PluginFactory> PluginFactory::s_instance;
 
@@ -127,12 +151,77 @@ PluginFactory::PluginInfoAndKey PluginFactory::pluginSupportingExtension(const Q
 
 PluginFactory::PluginInfo PluginFactory::pluginInfo(const char* name) const
 {
+	// Exact match first, preserving the original behaviour.
 	for (const PluginInfo& info : m_pluginInfos)
 	{
 		if (qstrcmp(info.descriptor->name, name) == 0)
 			return info;
 	}
+
+	const QString requested = QString::fromUtf8(name);
+
+	// Be forgiving about capitalisation of the plugin name.
+	for (const PluginInfo& info : m_pluginInfos)
+	{
+		if (requested.compare(QString::fromUtf8(info.descriptor->name), Qt::CaseInsensitive) == 0)
+			return info;
+	}
+
+	// Resolve names that were renamed in LMMS 1.3 (in both directions, so
+	// that builds which still ship the legacy descriptor name keep working).
+	for (const auto& alias : s_pluginAliases)
+	{
+		const QString legacyName = QString::fromLatin1(alias.legacyName);
+		const QString currentName = QString::fromLatin1(alias.currentName);
+		QString targetName;
+		if (requested.compare(legacyName, Qt::CaseInsensitive) == 0)
+			targetName = currentName;
+		else if (requested.compare(currentName, Qt::CaseInsensitive) == 0)
+			targetName = legacyName;
+		else
+			continue;
+
+		for (const PluginInfo& info : m_pluginInfos)
+		{
+			if (targetName.compare(QString::fromUtf8(info.descriptor->name),
+						Qt::CaseInsensitive) != 0)
+				continue;
+
+			// Warn once per alias so that project loading does not flood the
+			// log (instantiate may call pluginInfo more than once per plugin).
+			static QSet<QString> warnedAliases;
+			const QString warningKey = requested.toLower() + QLatin1Char('>')
+				+ QString::fromUtf8(info.descriptor->name).toLower();
+			if (!warnedAliases.contains(warningKey))
+			{
+				warnedAliases.insert(warningKey);
+				qWarning("PluginFactory: plugin name \"%s\" is not known to this "
+					"build (renamed in LMMS 1.3?); loading \"%s\" instead. "
+					"Saving the project will write \"%s\".",
+					qUtf8Printable(requested), info.descriptor->name,
+					info.descriptor->name);
+			}
+			return info;
+		}
+	}
+
 	return PluginInfo();
+}
+
+
+QString PluginFactory::resolveAlias(const QString& name, bool* wasAliased)
+{
+	if (wasAliased) { *wasAliased = false; }
+
+	for (const auto& alias : s_pluginAliases)
+	{
+		if (name.compare(QString::fromLatin1(alias.legacyName), Qt::CaseInsensitive) == 0)
+		{
+			if (wasAliased) { *wasAliased = true; }
+			return QString::fromLatin1(alias.currentName);
+		}
+	}
+	return name;
 }
 
 QString PluginFactory::errorString(QString pluginName) const

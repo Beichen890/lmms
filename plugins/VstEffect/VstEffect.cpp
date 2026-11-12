@@ -25,7 +25,13 @@
 
 #include "VstEffect.h"
 
+#include <cmath>
+
+#include <QDebug>
+#include <QFileInfo>
+
 #include "GuiApplication.h"
+#include "PathUtil.h"
 #include "Song.h"
 #include "TextFloat.h"
 #include "VstPlugin.h"
@@ -70,6 +76,11 @@ VstEffect::VstEffect( Model * _parent,
 	{
 		loaded = openPlugin(m_key.attributes["file"]);
 	}
+	else
+	{
+		qWarning() << "VstEffect: no plugin file specified for effect"
+					<< m_key.name;
+	}
 	setDisplayName( m_key.attributes["file"].section( ".dll", 0, 0 ).isEmpty()
 		? m_key.name : m_key.attributes["file"].section( ".dll", 0, 0 ) );
 
@@ -85,10 +96,48 @@ Effect::ProcessStatus VstEffect::processImpl(SampleFrame* buf, const f_cnt_t fra
 	static thread_local auto tempBuf = std::array<SampleFrame, MAXIMUM_BUFFER_SIZE>();
 
 	std::memcpy(tempBuf.data(), buf, sizeof(SampleFrame) * frames);
+	bool processed = false;
 	if (m_pluginMutex.tryLock(Engine::getSong()->isExporting() ? -1 : 0))
 	{
 		m_plugin->process(tempBuf.data(), tempBuf.data());
 		m_pluginMutex.unlock();
+		processed = true;
+	}
+
+	// Warn once if a loaded effect keeps swallowing the signal completely.
+	// Some plugins (e.g. TAL-Pha) do not work in LMMS' VST host and simply
+	// output silence; without this warning such a track just goes silent.
+	if (processed && !m_warnedAboutSilence)
+	{
+		bool inputIsSilent = true;
+		bool outputIsSilent = true;
+		for (f_cnt_t f = 0; f < frames; ++f)
+		{
+			if (std::fabs(buf[f][0]) > 1e-6f || std::fabs(buf[f][1]) > 1e-6f)
+			{
+				inputIsSilent = false;
+			}
+			if (std::fabs(tempBuf[f][0]) > 1e-6f || std::fabs(tempBuf[f][1]) > 1e-6f)
+			{
+				outputIsSilent = false;
+			}
+		}
+		if (!inputIsSilent && outputIsSilent)
+		{
+			if (++m_silentOutputBuffers >= 32)
+			{
+				qWarning() << "VstEffect:" << m_key.name << "("
+							<< m_key.attributes["file"] << ")"
+							<< "produced only silence for" << m_silentOutputBuffers
+							<< "buffers although its input had signal; the plugin"
+							" may be incompatible with LMMS' VST host";
+				m_warnedAboutSilence = true;
+			}
+		}
+		else
+		{
+			m_silentOutputBuffers = 0;
+		}
 	}
 
 	const float w = wetLevel();
@@ -107,6 +156,15 @@ Effect::ProcessStatus VstEffect::processImpl(SampleFrame* buf, const f_cnt_t fra
 
 bool VstEffect::openPlugin(const QString& plugin)
 {
+	if( !QFileInfo::exists( PathUtil::toAbsolute( plugin ) ) )
+	{
+		qWarning() << "VstEffect:" << m_key.name
+					<< "- plugin file does not exist:" << plugin;
+		collectErrorForUI(VstPlugin::tr("The VST plugin %1 could not be loaded.")
+			.arg(plugin));
+		return false;
+	}
+
 	gui::TextFloat* tf = nullptr;
 	if( gui::getGUI() != nullptr )
 	{
@@ -120,6 +178,8 @@ bool VstEffect::openPlugin(const QString& plugin)
 	m_plugin = QSharedPointer<VstPlugin>(new VstPlugin(plugin));
 	if( m_plugin->failed() )
 	{
+		qWarning() << "VstEffect:" << m_key.name << "- failed to load VST plugin"
+					<< plugin << "(remote host could not instantiate it)";
 		m_plugin.clear();
 		delete tf;
 		collectErrorForUI(VstPlugin::tr("The VST plugin %1 could not be loaded.").arg(plugin));

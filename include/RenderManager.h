@@ -35,12 +35,23 @@
 namespace lmms
 {
 
+//! Options used by the CLI render actions.
+struct RenderOptions
+{
+	bool json = false;
+	double tailSeconds = 0.0;
+	bool normalize = false;
+	double normalizeDb = 0.0;
+	QStringList warnings;
+};
+
 
 class RenderManager : public QObject
 {
 	Q_OBJECT
 public:
-	RenderManager(const OutputSettings& outputSettings, ProjectRenderer::ExportFileFormat fmt, QString outputPath);
+	RenderManager(const OutputSettings& outputSettings, ProjectRenderer::ExportFileFormat fmt, QString outputPath,
+		const RenderOptions& options = RenderOptions());
 
 	~RenderManager() override;
 
@@ -51,6 +62,11 @@ public:
 	void renderTracks();
 
 	void abortProcessing();
+
+	const RenderStats& stats() const
+	{
+		return m_stats;
+	}
 
 signals:
 	void progressChanged( int );
@@ -63,12 +79,17 @@ private slots:
 private:
 	QString pathForTrack( const Track *track, int num );
 	void restoreMutedState();
+	void accumulateStats(const RenderStats& stats);
 
 	void render( QString outputPath );
 
 	const OutputSettings m_outputSettings;
 	ProjectRenderer::ExportFileFormat m_format;
 	QString m_outputPath;
+	RenderOptions m_options;
+
+	RenderStats m_stats;
+	bool m_renderingTracks = false;
 
 	std::unique_ptr<ProjectRenderer> m_activeRenderer;
 

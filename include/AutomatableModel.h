@@ -26,6 +26,7 @@
 #define LMMS_AUTOMATABLE_MODEL_H
 
 #include <cmath>
+#include <QList>
 #include <QMap>
 #include <QMutex>
 
@@ -83,6 +84,21 @@ public:
 		Logarithmic,
 		Decibel
 	};
+
+	//! A record of an XML name used by saveSettings() and the model it refers to.
+	//! Only collected while the metadata registry is explicitly enabled (CLI
+	//! introspection such as `--plugins-json`).
+	struct ModelMetadata
+	{
+		QString name;
+		const AutomatableModel* model;
+	};
+
+	//! Enable/disable collection of metadata while saving settings.
+	static void setMetadataRegistryEnabled(bool enabled);
+	static bool isMetadataRegistryEnabled();
+	static void clearMetadataRegistry();
+	static QList<ModelMetadata> metadataRegistry();
 
 
 	~AutomatableModel() override;
@@ -421,6 +437,9 @@ private:
 	QMutex m_valueBufferMutex;
 
 	bool m_useControllerValue;
+
+	static bool s_metadataRegistryEnabled;
+	static QList<ModelMetadata> s_metadataRegistry;
 
 signals:
 	void initValueChanged( float val );

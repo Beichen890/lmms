@@ -7,6 +7,7 @@ set(LMMS_TESTS
 	src/core/ArrayVectorTest.cpp
 	src/core/AudioBufferTest.cpp
 	src/core/AutomatableModelTest.cpp
+	src/core/HeadlessUtilsTest.cpp
 	src/core/MathTest.cpp
 	src/core/ProjectVersionTest.cpp
 	src/core/RelativePathsTest.cpp

@@ -172,6 +172,15 @@ public:
 		m_exportLoop = exportLoop;
 	}
 
+	//! Restrict the next export to the song ticks in [startTicks, endTicks).
+	//! A negative endTicks means "until the end of the project". Only ticks are
+	//! used here; converting bars/seconds to ticks is the caller's job.
+	void setExportRange(int startTicks, int endTicks);
+	//! Remove a previously configured export range and restore the default
+	//! (whole song / loop based) export behaviour.
+	void clearExportRange();
+	bool hasExportRange() const;
+
 	inline bool isRecording() const
 	{
 		return m_recording;
@@ -451,6 +460,10 @@ private:
 	TimePos m_exportLoopEnd;
 	TimePos m_exportSongEnd;
 	TimePos m_exportEffectiveLength;
+
+	bool m_exportRangeEnabled;
+	tick_t m_exportRangeStart;
+	tick_t m_exportRangeEnd;
 
 	std::shared_ptr<Scale> m_scales[MaxScaleCount];
 	std::shared_ptr<Keymap> m_keymaps[MaxKeymapCount];

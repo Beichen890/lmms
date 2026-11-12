@@ -27,8 +27,21 @@
 #include "DelayEffect.h"
 #include "Engine.h"
 
+#include <QDebug>
+#include <QDomElement>
+
 namespace lmms
 {
+
+namespace
+{
+
+bool hasSetting(const QDomElement& elem, const QString& name)
+{
+	return elem.hasAttribute(name) || !elem.firstChildElement(name).isNull();
+}
+
+} // namespace
 
 DelayControls::DelayControls( DelayEffect* effect ):
 	EffectControls( effect ),
@@ -50,10 +63,46 @@ DelayControls::DelayControls( DelayEffect* effect ):
 void DelayControls::loadSettings( const QDomElement &_this )
 {
 	m_delayTimeModel.loadSettings(_this, "DelayTimeSamples" );
-	m_feedbackModel.loadSettings( _this, "FeebackAmount" );
+
+	// "FeebackAmount" is the historical misspelling still written by
+	// saveSettings(). Also accept the correct spelling "Feedback" (and a
+	// lower-case variant) so that hand-written projects work as expected.
+	if( hasSetting( _this, "Feedback" ) )
+	{
+		m_feedbackModel.loadSettings( _this, "Feedback" );
+	}
+	else if( hasSetting( _this, "feedback" ) )
+	{
+		m_feedbackModel.loadSettings( _this, "feedback" );
+	}
+	else
+	{
+		m_feedbackModel.loadSettings( _this, "FeebackAmount" );
+	}
+
 	m_lfoTimeModel.loadSettings( _this , "LfoFrequency");
 	m_lfoAmountModel.loadSettings( _this, "LfoAmount");
 	m_outGainModel.loadSettings( _this, "OutGain" );
+
+	// Tempo-sync parameters are saved as the value plus "_syncmode" (and
+	// optional "_numerator"/"_denominator"). A value without "_syncmode" is
+	// interpreted as milliseconds and silently does not follow the tempo.
+	if( hasSetting( _this, "DelayTimeSamples" )
+		&& !hasSetting( _this, "DelayTimeSamples_syncmode" ) )
+	{
+		qWarning( "Delay: \"DelayTimeSamples\" was loaded without "
+			"\"DelayTimeSamples_syncmode\"; tempo sync stays disabled and the "
+			"value is used as milliseconds. Add "
+			"DelayTimeSamples_syncmode=\"1\" (or another SyncMode value) to "
+			"enable tempo sync." );
+	}
+	if( hasSetting( _this, "LfoFrequency" )
+		&& !hasSetting( _this, "LfoFrequency_syncmode" ) )
+	{
+		qWarning( "Delay: \"LfoFrequency\" was loaded without "
+			"\"LfoFrequency_syncmode\"; tempo sync stays disabled and the value "
+			"is used as milliseconds." );
+	}
 }
 
 
@@ -62,6 +111,8 @@ void DelayControls::loadSettings( const QDomElement &_this )
 void DelayControls::saveSettings( QDomDocument& doc, QDomElement& _this )
 {
 	m_delayTimeModel.saveSettings( doc, _this, "DelayTimeSamples" );
+	// Keep the historical (misspelled) name so that projects stay readable by
+	// older LMMS versions; loadSettings() accepts both spellings.
 	m_feedbackModel.saveSettings( doc, _this ,"FeebackAmount" );
 	m_lfoTimeModel.saveSettings( doc, _this, "LfoFrequency" );
 	m_lfoAmountModel.saveSettings( doc, _this ,"LfoAmount" );

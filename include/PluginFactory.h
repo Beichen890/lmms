@@ -87,6 +87,13 @@ public:
 	/// PluginInfo::isNull() to check this).
 	PluginInfo pluginInfo(const char* name) const;
 
+	/// Resolves a plugin name renamed in LMMS 1.3 (e.g. "OPL2", "papu",
+	/// "spectrumanalyzer") to the name used by current plugins. The
+	/// comparison is case insensitive. If the name is not an alias, it is
+	/// returned unchanged. \p wasAliased is set to true if a mapping was
+	/// applied.
+	static QString resolveAlias(const QString& name, bool* wasAliased = nullptr);
+
 	/// When loading a library fails during discovery, the error string is saved.
 	/// It can be retrieved by calling this function.
 	QString errorString(QString pluginName) const;

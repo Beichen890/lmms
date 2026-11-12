@@ -46,6 +46,9 @@ public:
 	void loadSettings( const QDomElement & elem ) override;
 	inline QString nodeName() const override
 	{
+		// Historical (misspelled) name, kept for backwards compatibility.
+		// Effect::loadSettings() also accepts "crossovereqcontrols" and any
+		// case variant / "<...>controls" spelling.
 		return( "crossoevereqcontrols" );
 	}
 

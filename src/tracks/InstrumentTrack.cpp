@@ -40,6 +40,7 @@
 #include "PatternTrack.h"
 #include "PianoRoll.h"
 #include "Pitch.h"
+#include "PluginFactory.h"
 #include "Song.h"
 
 namespace lmms
@@ -895,7 +896,8 @@ void InstrumentTrack::loadTrackSpecificSettings( const QDomElement & thisElement
 {
 	// don't delete instrument in preview mode if it's the same
 	// we can't do this for other situations due to some issues with linked models
-	bool reuseInstrument = m_previewMode && m_instrument && m_instrument->nodeName() == getSavedInstrumentName(thisElement);
+	bool reuseInstrument = m_previewMode && m_instrument
+		&& m_instrument->nodeName() == PluginFactory::resolveAlias(getSavedInstrumentName(thisElement));
 	// remove the InstrumentPlayHandle if and only if we need to delete the instrument
 	silenceAllNotes(!reuseInstrument);
 
@@ -985,7 +987,8 @@ void InstrumentTrack::loadTrackSpecificSettings( const QDomElement & thisElement
 				m_instrument = nullptr;
 				m_instrument = Instrument::instantiate(
 					node.nodeName(), this, nullptr, true);
-				if (m_instrument->nodeName() == node.nodeName())
+				// Accept legacy plugin names renamed in LMMS 1.3 (e.g. OPL2)
+				if (m_instrument->nodeName() == PluginFactory::resolveAlias(node.nodeName()))
 				{
 					m_instrument->restoreState(node.toElement());
 				}

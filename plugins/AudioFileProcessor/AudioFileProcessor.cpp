@@ -32,7 +32,11 @@
 #include "LmmsTypes.h"
 #include "plugin_export.h"
 
+#include <QDebug>
+#include <QDir>
 #include <QDomElement>
+#include <QFileInfo>
+#include <QStringList>
 
 
 namespace lmms
@@ -194,7 +198,11 @@ void AudioFileProcessor::deleteNotePluginData( NotePlayHandle * _n )
 
 void AudioFileProcessor::saveSettings(QDomDocument& doc, QDomElement& elem)
 {
-	elem.setAttribute("src", m_sample.sampleFile());
+	// Persist project-local samples with an explicit "local:" prefix so that
+	// projects keep working after being moved to another directory or machine.
+	// Samples from the user/factory library are written with their matching
+	// prefix as well; absolute paths outside all known bases stay absolute.
+	elem.setAttribute("src", PathUtil::toShortestRelative(m_sample.sampleFile(), true));
 	if (m_sample.sampleFile().isEmpty())
 	{
 		elem.setAttribute("sampledata", m_sample.toBase64());
@@ -212,15 +220,103 @@ void AudioFileProcessor::saveSettings(QDomDocument& doc, QDomElement& elem)
 
 
 
+QString AudioFileProcessor::resolveSamplePath( const QString & _src ) const
+{
+	QString src = _src;
+	src.replace( '\\', '/' );
+	while( src.startsWith( "./" ) )
+	{
+		src.remove( 0, 2 );
+	}
+
+	// Nothing to search for absolute or already prefixed paths.
+	if( QFileInfo( src ).isAbsolute()
+		|| PathUtil::baseLookup( src ) != PathUtil::Base::Absolute )
+	{
+		return QString();
+	}
+
+	bool localDirValid = false;
+	const QString localDir = PathUtil::baseLocation( PathUtil::Base::LocalDir, &localDirValid );
+	const QString userSamples = PathUtil::baseLocation( PathUtil::Base::UserSample );
+	const QString factorySamples = PathUtil::baseLocation( PathUtil::Base::FactorySample );
+
+	struct Candidate
+	{
+		PathUtil::Base base;
+		QString relativePath;
+	};
+	QList<Candidate> candidates;
+
+	// Project directory first: covers bare "samples/..." paths as well as
+	// samples materialised into the project's samples/ folder from a preset.
+	if( localDirValid )
+	{
+		candidates << Candidate{ PathUtil::Base::LocalDir, src };
+		if( !src.startsWith( "samples/" ) )
+		{
+			candidates << Candidate{ PathUtil::Base::LocalDir, "samples/" + src };
+		}
+	}
+	// Sample libraries: covers preset paths like "SynthPack/Saw Lead.wav"
+	candidates << Candidate{ PathUtil::Base::UserSample, src };
+	candidates << Candidate{ PathUtil::Base::FactorySample, src };
+
+	for( const Candidate & candidate : candidates )
+	{
+		QString dir;
+		switch( candidate.base )
+		{
+			case PathUtil::Base::LocalDir:      dir = localDir; break;
+			case PathUtil::Base::UserSample:    dir = userSamples; break;
+			case PathUtil::Base::FactorySample: dir = factorySamples; break;
+			default: continue;
+		}
+		if( dir.isEmpty() )
+		{
+			continue;
+		}
+		if( QFileInfo( QDir::cleanPath( dir + candidate.relativePath ) ).exists() )
+		{
+			return PathUtil::basePrefix( candidate.base ) + candidate.relativePath;
+		}
+	}
+
+	return QString();
+}
+
+
+
 void AudioFileProcessor::loadSettings(const QDomElement& elem)
 {
 	if (auto srcFile = elem.attribute("src"); !srcFile.isEmpty())
 	{
-		if (QFileInfo(PathUtil::toAbsolute(srcFile)).exists())
+		QString resolvedSrc = srcFile;
+		if (!QFileInfo(PathUtil::toAbsolute(srcFile)).exists())
 		{
-			setAudioFile(srcFile, false);
+			// Older presets store path prefixes like "SynthPack/..." that are
+			// not project relative. Fall back to a search in the known sample
+			// locations instead of silently dropping the sample.
+			const QString fallback = resolveSamplePath(srcFile);
+			if (!fallback.isEmpty())
+			{
+				resolvedSrc = fallback;
+				qWarning("AudioFileProcessor: sample \"%s\" was not found directly; "
+					"using \"%s\" instead.",
+					qUtf8Printable(srcFile), qUtf8Printable(resolvedSrc));
+			}
 		}
-		else { Engine::getSong()->collectError(QString("%1: %2").arg(tr("Sample not found"), srcFile)); }
+
+		if (QFileInfo(PathUtil::toAbsolute(resolvedSrc)).exists())
+		{
+			setAudioFile(resolvedSrc, false);
+		}
+		else
+		{
+			qWarning("AudioFileProcessor: sample \"%s\" could not be found.",
+				qUtf8Printable(srcFile));
+			Engine::getSong()->collectError(QString("%1: %2").arg(tr("Sample not found"), srcFile));
+		}
 	}
 	else if (auto sampleData = elem.attribute("sampledata"); !sampleData.isEmpty())
 	{

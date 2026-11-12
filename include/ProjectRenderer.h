@@ -25,6 +25,10 @@
 #ifndef LMMS_PROJECT_RENDERER_H
 #define LMMS_PROJECT_RENDERER_H
 
+#include <vector>
+
+#include <QStringList>
+
 #include "AudioFileDevice.h"
 #include "AudioEngine.h"
 #include "OutputSettings.h"
@@ -33,6 +37,33 @@
 
 namespace lmms
 {
+
+//! Optional post-processing / statistics collection applied to a render.
+//! When @a capture is true the rendered audio is kept in memory, analysed,
+//! optionally padded with silence and normalized, and then encoded into the
+//! requested target format.
+struct RenderPostProcessOptions
+{
+	bool capture = false;
+	double tailSeconds = 0.0;
+	bool normalize = false;
+	double normalizeDb = 0.0;
+};
+
+//! Statistics computed from the samples that were written to the output file.
+struct RenderStats
+{
+	bool valid = false;
+	QString file;
+	QString format;
+	int sampleRate = 0;
+	double duration = 0.0;
+	double peak = 0.0;
+	double rms = 0.0;
+	bool silent = true;
+	int tracks = 0;
+	QStringList warnings;
+};
 
 
 class LMMS_EXPORT ProjectRenderer : public QThread
@@ -59,18 +90,28 @@ public:
 		AudioFileDeviceInstantiaton m_getDevInst;
 	} ;
 
-	ProjectRenderer(const OutputSettings& _os, ExportFileFormat _file_format, const QString& _out_file);
+	ProjectRenderer(const OutputSettings& _os, ExportFileFormat _file_format, const QString& _out_file,
+		const RenderPostProcessOptions& _postProcess = RenderPostProcessOptions());
 	~ProjectRenderer() override = default;
 
 	bool isReady() const
 	{
-		return m_fileDev != nullptr;
+		return m_postProcess.capture || m_fileDev != nullptr;
+	}
+
+	const RenderStats& stats() const
+	{
+		return m_stats;
 	}
 
 	static ExportFileFormat getFileFormatFromExtension(
 							const QString & _ext );
 
 	static QString getFileExtensionFromFormat( ExportFileFormat fmt );
+
+	//! Whether the given extension (without dot, case-insensitive) is
+	//! available as an export format in this build.
+	static bool isSupportedExtension( const QString & ext );
 
 	static const std::array<FileEncodeDevice, 5> fileEncodeDevices;
 
@@ -88,7 +129,19 @@ signals:
 private:
 	void run() override;
 
+	void finalizeCapturedRender();
+
 	AudioFileDevice * m_fileDev;
+
+	RenderPostProcessOptions m_postProcess;
+	OutputSettings m_finalSettings;
+	ExportFileFormat m_finalFormat;
+	QString m_finalOutput;
+
+	//! Interleaved float samples of the rendered range (capture mode only).
+	std::vector<float> m_capturedSamples;
+
+	RenderStats m_stats;
 
 	volatile int m_progress;
 	volatile bool m_abort;

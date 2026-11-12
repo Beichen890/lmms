@@ -791,7 +791,12 @@ void Mixer::clearChannel(mix_ch_t index)
 
 void Mixer::saveSettings( QDomDocument & _doc, QDomElement & _this )
 {
-	// save channels
+	// Save all channels, including the always existing master channel at index
+	// 0. Writing the master explicitly (instead of omitting it and relying on
+	// the implicit default created at load time) keeps the mixer section stable
+	// across load/save round trips: a project without a <mixer> element gets a
+	// master channel on the first save, and saving it again yields identical
+	// output.
 	for (auto i = std::size_t{0}; i < m_mixerChannels.size(); ++i)
 	{
 		MixerChannel * ch = m_mixerChannels[i];

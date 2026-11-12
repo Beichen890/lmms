@@ -62,6 +62,11 @@ private:
 	QMutex m_pluginMutex;
 	EffectKey m_key;
 
+	//! Number of consecutive processed buffers that were silent although the
+	//! input was not. Used to warn about incompatible effect plugins.
+	int m_silentOutputBuffers = 0;
+	bool m_warnedAboutSilence = false;
+
 	VstEffectControls m_vstControls;
 
 
