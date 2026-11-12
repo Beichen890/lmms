@@ -17,8 +17,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdir -p dist
-          gh run download 43232602807 --repo "$GITHUB_REPOSITORY" \
-            --name "lmms-1.3.0-alpha.2.2+39b13bf-mingw-win64.exe" --dir dist
+          # The build uploads its installer with archive: false, so the
+          # artifact endpoint returns the raw .exe instead of a zip archive.
+          curl -fL --retry 5 -H "Authorization: token $GH_TOKEN" \
+            -o "dist/lmms-1.3.0-alpha.2.2+39b13bf-mingw-win64.exe" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/13952738094/zip"
+          test -s "dist/lmms-1.3.0-alpha.2.2+39b13bf-mingw-win64.exe"
       - name: Publish release asset
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
