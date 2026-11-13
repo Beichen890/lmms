@@ -184,6 +184,55 @@ void scanVstPlugins(QJsonArray& vst, QJsonArray& errors)
 }
 
 
+void scanVst3Plugins(QJsonArray& vst3, QJsonArray& errors)
+{
+	auto scanDescriptor = [&](const char* pluginName, const char* typeName) {
+		try
+		{
+			const PluginFactory::PluginInfo info =
+				getPluginFactory()->pluginInfo(pluginName);
+			if (info.isNull() || info.descriptor == nullptr)
+			{
+				errors.append(QString("VST3 host plugin \"%1\" is not available")
+					.arg(QString::fromUtf8(pluginName)));
+				return;
+			}
+			if (info.descriptor->subPluginFeatures == nullptr)
+			{
+				errors.append(QString("VST3 host plugin \"%1\" does not expose sub plugins")
+					.arg(QString::fromUtf8(pluginName)));
+				return;
+			}
+
+			Plugin::Descriptor::SubPluginFeatures::KeyList keys;
+			info.descriptor->subPluginFeatures->listSubPluginKeys(
+				info.descriptor, keys);
+
+			for (const auto& key : keys)
+			{
+				QJsonObject object;
+				object["name"] = key.name;
+				object["path"] = key.attributes.value("path");
+				object["uid"] = key.attributes.value("uid");
+				object["vendor"] = key.attributes.value("vendor");
+				object["type"] = QString::fromUtf8(typeName);
+				object["format"] = QStringLiteral("vst3");
+				object["supported"] = true;
+				vst3.append(object);
+			}
+		}
+		catch (...)
+		{
+			errors.append(QString("failed to scan \"%1\" plug-ins")
+				.arg(QString::fromUtf8(pluginName)));
+		}
+	};
+
+	scanDescriptor("vst3instrument", "instrument");
+	scanDescriptor("vst3effect", "effect");
+}
+
+
 void appendLv2Plugins(QJsonArray& lv2, QJsonArray& errors)
 {
 #ifdef LMMS_HAVE_LV2
@@ -229,30 +278,6 @@ void appendLv2Plugins(QJsonArray& lv2, QJsonArray& errors)
 }
 
 
-QStringList vst3SearchDirectories()
-{
-	QStringList directories;
-#ifdef Q_OS_WIN
-	const QString commonFiles = qEnvironmentVariable("COMMONPROGRAMFILES");
-	const QString programFiles = qEnvironmentVariable("PROGRAMFILES");
-	if (!commonFiles.isEmpty())
-	{
-		directories << QDir(commonFiles).filePath("VST3");
-	}
-	if (!programFiles.isEmpty())
-	{
-		directories << QDir(programFiles).filePath("Common Files/VST3");
-	}
-#elif defined(Q_OS_MACOS)
-	directories << QStringLiteral("/Library/Audio/Plug-Ins/VST3");
-#else
-	directories << QStringLiteral("/usr/lib/vst3");
-	directories << QDir::home().filePath(QStringLiteral(".vst3"));
-#endif
-	return directories;
-}
-
-
 QStringList clapSearchDirectories()
 {
 	QStringList directories;
@@ -277,8 +302,8 @@ QStringList clapSearchDirectories()
 }
 
 
-//! Lists plugin bundles in standard locations. These formats cannot be
-//! hosted by LMMS, so every entry is explicitly reported as unsupported.
+//! Lists plugin bundles in standard locations. CLAP cannot be hosted by
+//! LMMS, so every entry is explicitly reported as unsupported.
 void scanBundleDirectories(const QStringList& directories, const QString& suffix,
 	const QString& format, QJsonArray& target, QJsonArray& errors)
 {
@@ -348,8 +373,7 @@ int runScanPluginsAction(const QString& format, bool jsonOutput)
 		if (wants("lv2")) { appendLv2Plugins(lv2, errors); }
 		if (wants("vst3"))
 		{
-			scanBundleDirectories(vst3SearchDirectories(), QStringLiteral(".vst3"),
-				QStringLiteral("vst3"), vst3, errors);
+			scanVst3Plugins(vst3, errors);
 		}
 		if (wants("clap"))
 		{
