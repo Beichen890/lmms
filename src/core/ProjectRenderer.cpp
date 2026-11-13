@@ -35,6 +35,8 @@
 #include "Song.h"
 #include "PerfLog.h"
 
+#include "HeadlessWav.h"
+
 #include "AudioFileWave.h"
 #include "AudioFileOgg.h"
 #include "AudioFileMP3.h"
@@ -303,6 +305,28 @@ void ProjectRenderer::run()
 	if( m_abort )
 	{
 		QFile( f ).remove();
+		return;
+	}
+
+	if (m_postProcess.noMetadata && m_finalFormat == ExportFileFormat::Wave)
+	{
+		// libsndfile only writes the final RIFF sizes and the metadata chunks
+		// (notably PEAK) when the encoder is closed. Replace the encoder with a
+		// silent device so that it is destroyed - and the file finalized -
+		// before the chunks are rewritten.
+		if (Engine::audioEngine()->audioDev() == m_fileDev)
+		{
+			Engine::audioEngine()->setAudioDevice(
+				new CaptureAudioDevice(m_finalSettings, Engine::audioEngine()), false);
+			m_fileDev = nullptr; // owned and deleted by the audio engine
+		}
+
+		QString error;
+		if (!stripWavMetadata(f, &error))
+		{
+			m_stats.warnings << error;
+			fprintf(stderr, "%s\n", error.toUtf8().constData());
+		}
 	}
 }
 
@@ -392,6 +416,18 @@ void ProjectRenderer::finalizeCapturedRender()
 	{
 		m_stats.warnings << "output format is not available in this build: "
 			<< formatName(m_finalFormat);
+	}
+
+	// Stripping metadata does not touch the PCM payload, so it can happen
+	// before the statistics are read back from the file.
+	if (encoded && m_postProcess.noMetadata && m_finalFormat == ExportFileFormat::Wave)
+	{
+		QString error;
+		if (!stripWavMetadata(m_finalOutput, &error))
+		{
+			m_stats.warnings << error;
+			fprintf(stderr, "%s\n", error.toUtf8().constData());
+		}
 	}
 
 	// Statistics should reflect the audio that was actually written. Read the

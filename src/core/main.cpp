@@ -28,6 +28,7 @@
 #include "versioninfo.h"
 
 #include <QDebug>
+#include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -80,7 +81,11 @@
 #include "Effect.h"
 #include "EffectChain.h"
 #include "HeadlessActions.h"
+#include "HeadlessMidi.h"
+#include "HeadlessMidiEdit.h"
+#include "HeadlessScan.h"
 #include "HeadlessUtils.h"
+#include "HeadlessValidation.h"
 #include "Instrument.h"
 #include "InstrumentTrack.h"
 #include "PatternStore.h"
@@ -116,6 +121,40 @@ static inline QString baseName( const QString & file )
 {
 	return QFileInfo( file ).absolutePath() + "/" +
 			QFileInfo( file ).completeBaseName();
+}
+
+
+//! Resolve a project bundle directory to the project file it contains.
+//! `makebundle` writes "<name>/<project>.mmp", so a bundle can be rendered
+//! by passing its directory; plain project files are returned unchanged.
+static QString resolveProjectInput( const QString & input )
+{
+	const QFileInfo info( input );
+	if( !info.isDir() )
+	{
+		return input;
+	}
+
+	const QStringList filters{ "*.mmp", "*.mmpz" };
+	const QDir dir( input );
+	const auto direct = dir.entryInfoList( filters, QDir::Files, QDir::Name );
+	if( !direct.isEmpty() )
+	{
+		return direct.first().absoluteFilePath();
+	}
+
+	const auto subdirs = dir.entryInfoList(
+		QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name );
+	for( const auto & subdir : subdirs )
+	{
+		const QDir bundle( subdir.absoluteFilePath() );
+		const auto nested = bundle.entryInfoList( filters, QDir::Files, QDir::Name );
+		if( !nested.isEmpty() )
+		{
+			return nested.first().absoluteFilePath();
+		}
+	}
+	return input;
 }
 
 
@@ -197,6 +236,16 @@ void printHelp()
 		"                                        Add automation for a real model\n"
 		"  --plugins-json [--type instrument|effect|ladspa|vst|all]\n"
 		"                                        Print plugin parameter metadata as JSON\n"
+		"  --scan-plugins [all|native|ladspa|vst|lv2|vst3|clap] [--json]\n"
+		"                                        Scan plugins and report failures\n"
+		"  validate <project> [--json]           Check a project for common problems\n"
+		"  import-midi <in.mid> --out <out.mmp> [--instrument <name>]\n"
+		"      [--name <track>] [--json]         Import a Standard MIDI File\n"
+		"  export-midi <project> --out <out.mid> [--json]\n"
+		"                                        Export MIDI clips to a Standard MIDI File\n"
+		"  midi-edit <project> --op <op> --out <out.mmp> [options]\n"
+		"                                        Headless note editing (quantize, swing,\n"
+		"                                        humanize, legato, strum, reverse, transpose)\n"
 		"  --model-ids <project>                 Print automation model id mapping as JSON\n"
 		"\nGlobal options:\n"
 		"      --allowroot                Bypass root user startup check (use with\n"
@@ -239,6 +288,8 @@ void printHelp()
 		"                                  End of the rendered region\n"
 		"      --tail <seconds>            Append silence after the content\n"
 		"      --normalize <dBFS>          Normalize float PCM before encoding\n"
+		"      --manifest <stems.json>     Write per-track metadata for rendertracks\n"
+		"      --no-metadata               Strip non-audio WAV chunks (PEAK/LIST/...)\n"
 		"      --json                      Print render statistics/errors as JSON\n\n",
 		LMMS_VERSION, LMMS_PROJECT_COPYRIGHT );
 }
@@ -388,6 +439,19 @@ int main( int argc, char * * argv )
 	double renderTail = 0.0;
 	bool renderNormalize = false;
 	double renderNormalizeDb = 0.0;
+	QString renderManifest;
+	bool renderNoMetadata = false;
+
+	// P2 headless actions
+	QString scanFormat = "all";
+	QString importMidiIn, importMidiOut, importInstrument, importTrackName;
+	QString exportMidiIn, exportMidiOut;
+	QString midiEditProject, midiEditOut, midiEditOp, midiEditTrack;
+	double midiEditGrid = 0.0;
+	double midiEditStrength = 1.0;
+	double midiEditAmount = 0.0;
+	int midiEditSemitones = 0;
+	int midiEditSeed = 0;
 
 	// first of two command-line parsing stages
 	for (int i = 1; i < argc; ++i)
@@ -414,7 +478,9 @@ int main( int argc, char * * argv )
 			renderTracks = true;
 		}
 		else if (arg == "save" || arg == "script" || arg == "--plugins-json" ||
-			arg == "--model-ids" || arg == "normalize-basenote" || arg == "automation-add")
+			arg == "--model-ids" || arg == "normalize-basenote" || arg == "automation-add" ||
+			arg == "--scan-plugins" || arg == "validate" || arg == "import-midi" ||
+			arg == "export-midi" || arg == "midi-edit")
 		{
 			coreOnly = true;
 		}
@@ -761,6 +827,185 @@ int main( int argc, char * * argv )
 			headlessAction = "automation-add";
 			break;
 		}
+		else if( arg == "validate" )
+		{
+			++i;
+			if( i == argc ) { return noInputFileError(); }
+			actionProject = QString::fromLocal8Bit( argv[i] );
+
+			while( i + 1 < argc )
+			{
+				const QString flag = QString::fromLocal8Bit( argv[i + 1] );
+				if( flag == "--json" ) { actionJson = true; ++i; }
+				else { return usageError( QString( "Invalid option %1" ).arg( flag ) ); }
+			}
+
+			headlessAction = "validate";
+			break;
+		}
+		else if( arg == "--scan-plugins" )
+		{
+			scanFormat = "all";
+			while( i + 1 < argc )
+			{
+				const QString flag = QString::fromLocal8Bit( argv[i + 1] );
+				if( flag == "--format" && i + 2 < argc )
+				{
+					scanFormat = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--json" ) { actionJson = true; ++i; }
+				else { return usageError( QString( "Invalid option %1" ).arg( flag ) ); }
+			}
+
+			headlessAction = "scan-plugins";
+			break;
+		}
+		else if( arg == "import-midi" )
+		{
+			++i;
+			if( i == argc ) { return noInputFileError(); }
+			importMidiIn = QString::fromLocal8Bit( argv[i] );
+			importInstrument = "tripleoscillator";
+
+			while( i + 1 < argc )
+			{
+				const QString flag = QString::fromLocal8Bit( argv[i + 1] );
+				if( flag == "--out" && i + 2 < argc )
+				{
+					importMidiOut = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--instrument" && i + 2 < argc )
+				{
+					importInstrument = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--name" && i + 2 < argc )
+				{
+					importTrackName = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--json" ) { actionJson = true; ++i; }
+				else { return usageError( QString( "Invalid option %1" ).arg( flag ) ); }
+			}
+
+			if( importMidiOut.isEmpty() )
+			{
+				return usageError( "import-midi requires --out <out.mmp>" );
+			}
+			headlessAction = "import-midi";
+			break;
+		}
+		else if( arg == "export-midi" )
+		{
+			++i;
+			if( i == argc ) { return noInputFileError(); }
+			exportMidiIn = QString::fromLocal8Bit( argv[i] );
+
+			while( i + 1 < argc )
+			{
+				const QString flag = QString::fromLocal8Bit( argv[i + 1] );
+				if( flag == "--out" && i + 2 < argc )
+				{
+					exportMidiOut = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--json" ) { actionJson = true; ++i; }
+				else { return usageError( QString( "Invalid option %1" ).arg( flag ) ); }
+			}
+
+			if( exportMidiOut.isEmpty() )
+			{
+				return usageError( "export-midi requires --out <out.mid>" );
+			}
+			headlessAction = "export-midi";
+			break;
+		}
+		else if( arg == "midi-edit" )
+		{
+			++i;
+			if( i == argc ) { return noInputFileError(); }
+			midiEditProject = QString::fromLocal8Bit( argv[i] );
+
+			auto parseDouble = [](const char* value, bool* ok) {
+				return QString( value ).toDouble( ok );
+			};
+
+			while( i + 1 < argc )
+			{
+				const QString flag = QString::fromLocal8Bit( argv[i + 1] );
+				if( flag == "--op" && i + 2 < argc )
+				{
+					midiEditOp = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--out" && i + 2 < argc )
+				{
+					midiEditOut = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--track" && i + 2 < argc )
+				{
+					midiEditTrack = QString::fromLocal8Bit( argv[i + 2] );
+					i += 2;
+				}
+				else if( flag == "--grid" && i + 2 < argc )
+				{
+					bool ok = false;
+					midiEditGrid = parseDouble( argv[i + 2], &ok );
+					if( !ok || midiEditGrid < 0.0 )
+					{
+						return usageError( "--grid expects a non-negative number" );
+					}
+					i += 2;
+				}
+				else if( flag == "--strength" && i + 2 < argc )
+				{
+					bool ok = false;
+					midiEditStrength = parseDouble( argv[i + 2], &ok );
+					if( !ok || midiEditStrength < 0.0 || midiEditStrength > 1.0 )
+					{
+						return usageError( "--strength expects a value between 0 and 1" );
+					}
+					i += 2;
+				}
+				else if( flag == "--amount" && i + 2 < argc )
+				{
+					bool ok = false;
+					midiEditAmount = parseDouble( argv[i + 2], &ok );
+					if( !ok ) { return usageError( "--amount expects a number" ); }
+					i += 2;
+				}
+				else if( flag == "--semitones" && i + 2 < argc )
+				{
+					bool ok = false;
+					midiEditSemitones = QString( argv[i + 2] ).toInt( &ok );
+					if( !ok ) { return usageError( "--semitones expects an integer" ); }
+					i += 2;
+				}
+				else if( flag == "--seed" && i + 2 < argc )
+				{
+					bool ok = false;
+					midiEditSeed = QString( argv[i + 2] ).toInt( &ok );
+					if( !ok ) { return usageError( "--seed expects an integer" ); }
+					i += 2;
+				}
+				else if( flag == "--json" ) { actionJson = true; ++i; }
+				else { return usageError( QString( "Invalid option %1" ).arg( flag ) ); }
+			}
+
+			if( midiEditOp.isEmpty() )
+			{
+				return usageError( "midi-edit requires --op <op>" );
+			}
+			if( midiEditOut.isEmpty() )
+			{
+				return usageError( "midi-edit requires --out <out.mmp>" );
+			}
+			headlessAction = "midi-edit";
+			break;
+		}
 		else if( arg == "render" || arg == "--render" || arg == "-r" ||
 			arg == "rendertracks" || arg == "--rendertracks" )
 		{
@@ -996,6 +1241,19 @@ int main( int argc, char * * argv )
 			}
 			renderNormalize = true;
 		}
+		else if( arg == "--manifest" )
+		{
+			++i;
+			if( i == argc )
+			{
+				return renderOptionError( jsonRender, "invalid-argument", "No manifest file specified" );
+			}
+			renderManifest = QString::fromLocal8Bit( argv[i] );
+		}
+		else if( arg == "--no-metadata" )
+		{
+			renderNoMetadata = true;
+		}
 		else
 		{
 			if( argv[i][0] == '-' )
@@ -1018,6 +1276,12 @@ int main( int argc, char * * argv )
 				QString( "Unsupported output format \".%1\"" ).arg( suffix ) );
 		}
 	}
+
+	// Accept a project bundle directory wherever a project file is expected.
+	fileToLoad = resolveProjectInput( fileToLoad );
+	actionProject = resolveProjectInput( actionProject );
+	exportMidiIn = resolveProjectInput( exportMidiIn );
+	midiEditProject = resolveProjectInput( midiEditProject );
 
 	// Test file argument before continuing
 	if( !fileToLoad.isEmpty() )
@@ -1100,6 +1364,38 @@ int main( int argc, char * * argv )
 			ret = lmms::headless::runAutomationAddAction(
 				actionProject, automationTrackName, automationEffect, automationParam,
 				automationPoints, actionOut );
+		}
+		else if( headlessAction == "scan-plugins" )
+		{
+			ret = lmms::headless::runScanPluginsAction( scanFormat, actionJson );
+		}
+		else if( headlessAction == "validate" )
+		{
+			ret = lmms::headless::runValidateAction( actionProject, actionJson );
+		}
+		else if( headlessAction == "import-midi" )
+		{
+			ret = lmms::headless::runImportMidiAction(
+				importMidiIn, importMidiOut, importInstrument, importTrackName, actionJson );
+		}
+		else if( headlessAction == "export-midi" )
+		{
+			ret = lmms::headless::runExportMidiAction(
+				exportMidiIn, exportMidiOut, actionJson );
+		}
+		else if( headlessAction == "midi-edit" )
+		{
+			lmms::headless::MidiEditOptions options;
+			options.op = midiEditOp;
+			options.track = midiEditTrack;
+			options.grid = midiEditGrid;
+			options.strength = midiEditStrength;
+			options.amount = midiEditAmount;
+			options.semitones = midiEditSemitones;
+			options.seed = midiEditSeed;
+			options.json = actionJson;
+			ret = lmms::headless::runMidiEditAction(
+				midiEditProject, options, midiEditOut, actionJson );
 		}
 
 		Engine::destroy();
@@ -1187,6 +1483,8 @@ int main( int argc, char * * argv )
 		renderOptions.tailSeconds = renderTail;
 		renderOptions.normalize = renderNormalize;
 		renderOptions.normalizeDb = renderNormalizeDb;
+		renderOptions.manifestPath = renderManifest;
+		renderOptions.noMetadata = renderNoMetadata;
 		renderOptions.warnings = collectResourceWarnings();
 
 		// create renderer

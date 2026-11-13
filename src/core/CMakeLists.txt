@@ -26,7 +26,12 @@ set(LMMS_SRCS
 	core/EnvelopeAndLfoParameters.cpp
 	core/fft_helpers.cpp
 	core/HeadlessActions.cpp
+	core/HeadlessMidi.cpp
+	core/HeadlessMidiEdit.cpp
+	core/HeadlessScan.cpp
 	core/HeadlessUtils.cpp
+	core/HeadlessValidation.cpp
+	core/HeadlessWav.cpp
 	core/Mixer.cpp
 	core/ImportFilter.cpp
 	core/InlineAutomation.cpp

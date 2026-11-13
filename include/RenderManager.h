@@ -28,6 +28,8 @@
 
 #include <memory>
 
+#include <QJsonArray>
+
 #include "ProjectRenderer.h"
 #include "OutputSettings.h"
 
@@ -42,6 +44,11 @@ struct RenderOptions
 	double tailSeconds = 0.0;
 	bool normalize = false;
 	double normalizeDb = 0.0;
+	//! When set, `renderTracks()` writes a JSON manifest describing every
+	//! rendered stem into this path.
+	QString manifestPath;
+	//! Strip non-audio metadata chunks (PEAK, LIST, ...) from WAV output.
+	bool noMetadata = false;
 	QStringList warnings;
 };
 
@@ -81,6 +88,9 @@ private:
 	void restoreMutedState();
 	void accumulateStats(const RenderStats& stats);
 
+	void recordManifestTrack(const Track* track, int index, const RenderStats& stats);
+	void writeManifest();
+
 	void render( QString outputPath );
 
 	const OutputSettings m_outputSettings;
@@ -95,6 +105,12 @@ private:
 
 	std::vector<Track*> m_tracksToRender;
 	std::vector<Track*> m_unmuted;
+
+	//! Track currently being rendered and its per-stem manifest data.
+	Track* m_currentTrack = nullptr;
+	int m_currentTrackIndex = 0;
+	QString m_currentTrackFile;
+	QJsonArray m_manifestTracks;
 } ;
 
 

@@ -48,6 +48,9 @@ struct RenderPostProcessOptions
 	double tailSeconds = 0.0;
 	bool normalize = false;
 	double normalizeDb = 0.0;
+	//! Strip non-audio metadata chunks (PEAK, LIST, ...) from WAV output so
+	//! that repeated renders of the same project are byte-identical.
+	bool noMetadata = false;
 };
 
 //! Statistics computed from the samples that were written to the output file.

@@ -23,14 +23,19 @@
  */
 
 #include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 
 #include <algorithm>
+#include <vector>
 
 #include "RenderManager.h"
 
 #include "PatternStore.h"
 #include "Song.h"
+#include "Track.h"
 
 
 namespace lmms
@@ -105,14 +110,25 @@ void RenderManager::renderNextTrack()
 {
 	if (m_activeRenderer)
 	{
-		accumulateStats(m_activeRenderer->stats());
+		const RenderStats stats = m_activeRenderer->stats();
+		if (m_renderingTracks && m_currentTrack != nullptr
+			&& !m_options.manifestPath.isEmpty())
+		{
+			recordManifestTrack(m_currentTrack, m_currentTrackIndex, stats);
+		}
+		accumulateStats(stats);
 	}
 	m_activeRenderer.reset();
+	m_currentTrack = nullptr;
 
 	if (m_tracksToRender.empty())
 	{
 		// nothing left to render
 		restoreMutedState();
+		if (m_renderingTracks && !m_options.manifestPath.isEmpty())
+		{
+			writeManifest();
+		}
 		emit finished();
 	}
 	else
@@ -129,8 +145,72 @@ void RenderManager::renderNextTrack()
 
 		// for multi-render, prefix each output file with a different number
 		int trackNum = m_tracksToRender.size() + 1;
+		const QString outputPath = pathForTrack(renderTrack, trackNum);
 
-		render( pathForTrack(renderTrack, trackNum) );
+		m_currentTrack = renderTrack;
+		m_currentTrackIndex = trackNum;
+		m_currentTrackFile = outputPath;
+
+		render( outputPath );
+	}
+}
+
+// Record the statistics of a finished stem for the rendertracks manifest.
+void RenderManager::recordManifestTrack(const Track* track, int index, const RenderStats& stats)
+{
+	if (track == nullptr) { return; }
+
+	QJsonObject entry;
+	entry["index"] = index;
+	entry["name"] = track->name();
+	entry["type"] = track->type() == Track::Type::Sample ? "sample" : "instrument";
+	entry["file"] = stats.file.isEmpty() ? m_currentTrackFile : stats.file;
+	entry["peak"] = stats.peak;
+	entry["rms"] = stats.rms;
+	entry["silent"] = stats.silent;
+	entry["duration"] = stats.duration;
+	m_manifestTracks.append(entry);
+}
+
+// Write the rendertracks manifest after every stem has been rendered.
+void RenderManager::writeManifest()
+{
+	auto reportFailure = [this](const QString& message) {
+		fprintf(stderr, "%s\n", message.toUtf8().constData());
+		if (!m_stats.warnings.contains(message)) { m_stats.warnings << message; }
+	};
+
+	std::vector<QJsonObject> entries;
+	entries.reserve(static_cast<std::size_t>(m_manifestTracks.size()));
+	for (const QJsonValue value : m_manifestTracks)
+	{
+		entries.push_back(value.toObject());
+	}
+	std::sort(entries.begin(), entries.end(),
+		[](const QJsonObject& a, const QJsonObject& b) {
+			return a.value("index").toInt() < b.value("index").toInt();
+		});
+
+	QJsonArray tracks;
+	for (const auto& entry : entries) { tracks.append(entry); }
+
+	QJsonObject root;
+	root["ok"] = true;
+	root["project"] = Engine::getSong()->projectFileName();
+	root["tracks"] = tracks;
+
+	QFile file(m_options.manifestPath);
+	if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
+	{
+		reportFailure(QString("could not write manifest: %1").arg(m_options.manifestPath));
+		return;
+	}
+
+	const QByteArray data = QJsonDocument(root).toJson(QJsonDocument::Compact) + '\n';
+	if (file.write(data) != data.size() || !file.flush())
+	{
+		reportFailure(QString("could not write manifest: %1").arg(m_options.manifestPath));
+		return;
 	}
 }
 
@@ -138,6 +218,10 @@ void RenderManager::renderNextTrack()
 void RenderManager::renderTracks()
 {
 	m_renderingTracks = true;
+	m_manifestTracks = QJsonArray();
+	m_currentTrack = nullptr;
+	m_currentTrackIndex = 0;
+	m_currentTrackFile.clear();
 
 	const TrackContainer::TrackList& tl = Engine::getSong()->tracks();
 
@@ -198,10 +282,14 @@ void RenderManager::renderProject()
 void RenderManager::render(QString outputPath)
 {
 	RenderPostProcessOptions postProcess;
-	postProcess.capture = m_options.json || m_options.tailSeconds > 0.0 || m_options.normalize;
+	// The manifest needs per-stem statistics, which are only computed when the
+	// render is captured in memory.
+	postProcess.capture = m_options.json || !m_options.manifestPath.isEmpty()
+		|| m_options.tailSeconds > 0.0 || m_options.normalize;
 	postProcess.tailSeconds = m_options.tailSeconds;
 	postProcess.normalize = m_options.normalize;
 	postProcess.normalizeDb = m_options.normalizeDb;
+	postProcess.noMetadata = m_options.noMetadata;
 
 	m_activeRenderer = std::make_unique<ProjectRenderer>(
 		m_outputSettings, m_format, outputPath, postProcess);
