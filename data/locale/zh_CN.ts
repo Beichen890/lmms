@@ -1544,12 +1544,12 @@ This chip was used in the Commodore 64 computer.</source>
     <message>
         <location filename="../../src/gui/AutomatableModelView.cpp" line="88"/>
         <source>Edit song-global automation</source>
-        <translation>编辑歌曲全局自动控制</translation>
+        <translation>编辑歌曲全局自动化</translation>
     </message>
     <message>
         <location filename="../../src/gui/AutomatableModelView.cpp" line="93"/>
         <source>Remove song-global automation</source>
-        <translation>删除歌曲全局自动控制</translation>
+        <translation>删除歌曲全局自动化</translation>
     </message>
     <message>
         <location filename="../../src/gui/AutomatableModelView.cpp" line="102"/>
@@ -1595,7 +1595,7 @@ This chip was used in the Commodore 64 computer.</source>
     <message>
         <location filename="../../src/tracks/AutomationTrack.cpp" line="39"/>
         <source>Automation track</source>
-        <translation>自动控制轨道</translation>
+        <translation>自动化轨道</translation>
     </message>
 </context>
 <context>
@@ -6529,7 +6529,7 @@ Please make sure you have read-permission to the file and the directory containi
         <location filename="../../src/gui/editors/AutomationEditor.cpp" line="2222"/>
         <location filename="../../src/gui/editors/AutomationEditor.cpp" line="2338"/>
         <source>Automation Editor - %1</source>
-        <translation>自动控制编辑器 - %1</translation>
+        <translation>自动化编辑器 - %1</translation>
     </message>
     <message>
         <location filename="../../src/gui/editors/AutomationEditor.cpp" line="2275"/>
@@ -7099,7 +7099,7 @@ Press &lt;Shift&gt; for destructive splitting.</source>
     <message>
         <location filename="../../plugins/Compressor/CompressorControlDialog.cpp" line="169"/>
         <source>Automatically control attack value depending on crest factor</source>
-        <translation>根据波峰因数自动控制起音值</translation>
+        <translation>根据波峰因数自动化起音值</translation>
     </message>
     <message>
         <location filename="../../plugins/Compressor/CompressorControlDialog.cpp" line="172"/>
@@ -7109,7 +7109,7 @@ Press &lt;Shift&gt; for destructive splitting.</source>
     <message>
         <location filename="../../plugins/Compressor/CompressorControlDialog.cpp" line="174"/>
         <source>Automatically control release value depending on crest factor</source>
-        <translation>根据波峰因数自动控制释放值</translation>
+        <translation>根据波峰因数自动化释放值</translation>
     </message>
     <message>
         <location filename="../../plugins/Compressor/CompressorControlDialog.cpp" line="176"/>
@@ -8854,7 +8854,7 @@ Please make sure you have write permission to the file and the directory contain
     <message>
         <location filename="../../src/gui/GuiApplication.cpp" line="187"/>
         <source>Preparing piano roll</source>
-        <translation>正在准备钢琴窗</translation>
+        <translation>正在准备钢琴卷帘</translation>
     </message>
     <message>
         <location filename="../../src/gui/GuiApplication.cpp" line="191"/>
@@ -10064,7 +10064,7 @@ Please make sure you have write permission to the file and the directory contain
     <message>
         <location filename="../../plugins/LadspaBrowser/LadspaPortDialog.cpp" line="58"/>
         <source>Rate</source>
-        <translation>比特率</translation>
+        <translation>速率</translation>
     </message>
     <message>
         <location filename="../../plugins/LadspaBrowser/LadspaPortDialog.cpp" line="59"/>
@@ -10570,7 +10570,7 @@ Please make sure you have write permission to the file and the directory contain
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="140"/>
         <source>Volumes</source>
-        <translation>音量</translation>
+        <translation>磁盘</translation>
     </message>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="143"/>
@@ -10610,7 +10610,7 @@ Please make sure you have write permission to the file and the directory contain
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="295"/>
         <source>Save as New &amp;Version</source>
-        <translation>保存为新版本(&amp;V)</translation>
+        <translation>保存为新版本 (&amp;V)</translation>
     </message>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="300"/>
@@ -10705,7 +10705,7 @@ Please make sure you have write permission to the file and the directory contain
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="407"/>
         <source>Create new project from template</source>
-        <translation>从模版新建工程</translation>
+        <translation>从模板新建工程</translation>
     </message>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="412"/>
@@ -10748,13 +10748,13 @@ Please make sure you have write permission to the file and the directory contain
         <location filename="../../src/gui/MainWindow.cpp" line="453"/>
         <location filename="../../src/gui/MainWindow.cpp" line="1057"/>
         <source>Piano Roll</source>
-        <translation>显示/隐藏钢琴窗</translation>
+        <translation>显示/隐藏钢琴卷帘</translation>
     </message>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="457"/>
         <location filename="../../src/gui/MainWindow.cpp" line="1061"/>
         <source>Automation Editor</source>
-        <translation>显示/隐藏自动控制编辑器</translation>
+        <translation>显示/隐藏自动化编辑器</translation>
     </message>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="461"/>
@@ -10775,7 +10775,7 @@ Please make sure you have write permission to the file and the directory contain
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="575"/>
         <source>Untitled</source>
-        <translation>未标题</translation>
+        <translation>未命名</translation>
     </message>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="590"/>
@@ -10882,7 +10882,7 @@ Please visit http://lmms.sf.net/wiki for documentation on LMMS.</source>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="1104"/>
         <source>Enable note labels in piano roll</source>
-        <translation>在钢琴窗中显示音号</translation>
+        <translation>在钢琴卷帘中显示音号</translation>
     </message>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="1398"/>
@@ -10893,7 +10893,7 @@ Please visit http://lmms.sf.net/wiki for documentation on LMMS.</source>
         <location filename="../../src/gui/MainWindow.cpp" line="1410"/>
         <location filename="../../src/gui/MainWindow.cpp" line="1467"/>
         <source>untitled</source>
-        <translation>未标题</translation>
+        <translation>未命名</translation>
     </message>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="1414"/>
@@ -10929,7 +10929,7 @@ Please visit http://lmms.sf.net/wiki for documentation on LMMS.</source>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="1525"/>
         <source>The project %1 was not saved!</source>
-        <translation>工程%1没有保存！</translation>
+        <translation>工程 %1 没有保存！</translation>
     </message>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="1564"/>
@@ -10939,12 +10939,12 @@ Please visit http://lmms.sf.net/wiki for documentation on LMMS.</source>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="1566"/>
         <source>MIDI sequences</source>
-        <translation>MIDI 音序器</translation>
+        <translation>MIDI 序列</translation>
     </message>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="1568"/>
         <source>Hydrogen projects</source>
-        <translation>Hydrogen工程</translation>
+        <translation>Hydrogen 工程</translation>
     </message>
     <message>
         <location filename="../../src/gui/MainWindow.cpp" line="1570"/>
@@ -11546,7 +11546,7 @@ Enter &apos;x&apos; if you wish to leave the key disabled / not mapped.</source>
     <message>
         <location filename="../../src/gui/clips/MidiClipView.cpp" line="199"/>
         <source>Open in piano-roll</source>
-        <translation>在钢琴窗中打开</translation>
+        <translation>在钢琴卷帘中打开</translation>
     </message>
     <message>
         <location filename="../../src/gui/clips/MidiClipView.cpp" line="204"/>
@@ -11556,7 +11556,7 @@ Enter &apos;x&apos; if you wish to leave the key disabled / not mapped.</source>
     <message>
         <location filename="../../src/gui/clips/MidiClipView.cpp" line="210"/>
         <source>Set as ghost in automation editor</source>
-        <translation>在自动控制编辑器内设置幽灵投影音符</translation>
+        <translation>在自动化编辑器内设置幽灵投影音符</translation>
     </message>
     <message>
         <location filename="../../src/gui/clips/MidiClipView.cpp" line="219"/>
@@ -11586,17 +11586,17 @@ Enter &apos;x&apos; if you wish to leave the key disabled / not mapped.</source>
     <message>
         <location filename="../../src/gui/clips/MidiClipView.cpp" line="249"/>
         <source>Add steps</source>
-        <translation>添加音阶</translation>
+        <translation>添加步进</translation>
     </message>
     <message>
         <location filename="../../src/gui/clips/MidiClipView.cpp" line="251"/>
         <source>Remove steps</source>
-        <translation>移除音阶</translation>
+        <translation>移除步进</translation>
     </message>
     <message>
         <location filename="../../src/gui/clips/MidiClipView.cpp" line="253"/>
         <source>Clone Steps</source>
-        <translation>复制音阶</translation>
+        <translation>复制步进</translation>
     </message>
 </context>
 <context>
@@ -11635,7 +11635,7 @@ Enter &apos;x&apos; if you wish to leave the key disabled / not mapped.</source>
     <message>
         <location filename="../../src/gui/MixerChannelView.cpp" line="87"/>
         <source>Channel send amount</source>
-        <translation>通道发送的数量</translation>
+        <translation>通道发送量</translation>
     </message>
     <message>
         <location filename="../../src/gui/MixerChannelView.cpp" line="119"/>
@@ -12337,7 +12337,7 @@ Warning: This operation can not be undone.</source>
     <message>
         <location filename="../../src/gui/editors/PatternEditor.cpp" line="300"/>
         <source>Play/pause current pattern (Space)</source>
-        <translation>播放/暂停当前片段（空格）</translation>
+        <translation>播放/暂停当前样式（空格）</translation>
     </message>
     <message>
         <location filename="../../src/gui/editors/PatternEditor.cpp" line="301"/>
@@ -12352,7 +12352,7 @@ Warning: This operation can not be undone.</source>
     <message>
         <location filename="../../src/gui/editors/PatternEditor.cpp" line="315"/>
         <source>Track and step actions</source>
-        <translation>音轨和音阶动作</translation>
+        <translation>轨道与步进操作</translation>
     </message>
     <message>
         <location filename="../../src/gui/editors/PatternEditor.cpp" line="318"/>
@@ -12372,22 +12372,22 @@ Warning: This operation can not be undone.</source>
     <message>
         <location filename="../../src/gui/editors/PatternEditor.cpp" line="324"/>
         <source>Add automation-track</source>
-        <translation>添加自动控制轨道</translation>
+        <translation>添加自动化轨道</translation>
     </message>
     <message>
         <location filename="../../src/gui/editors/PatternEditor.cpp" line="333"/>
         <source>Remove steps</source>
-        <translation>移除音阶</translation>
+        <translation>移除步进</translation>
     </message>
     <message>
         <location filename="../../src/gui/editors/PatternEditor.cpp" line="335"/>
         <source>Add steps</source>
-        <translation>添加音阶</translation>
+        <translation>添加步进</translation>
     </message>
     <message>
         <location filename="../../src/gui/editors/PatternEditor.cpp" line="337"/>
         <source>Clone Steps</source>
-        <translation>复制音阶</translation>
+        <translation>复制步进</translation>
     </message>
 </context>
 <context>
@@ -13363,7 +13363,7 @@ Warning: This operation can not be undone.</source>
     <message>
         <location filename="../../src/gui/clips/SampleClipView.cpp" line="99"/>
         <source>Set as ghost in automation editor</source>
-        <translation>在自动控制编辑器内设置幽灵投影音符</translation>
+        <translation>在自动化编辑器内设置幽灵投影音符</translation>
     </message>
 </context>
 <context>
@@ -14535,7 +14535,7 @@ Latency: %2 ms</source>
     <message>
         <location filename="../../src/gui/editors/SongEditor.cpp" line="949"/>
         <source>Add automation-track</source>
-        <translation>添加自动控制轨道</translation>
+        <translation>添加自动化轨道</translation>
     </message>
     <message>
         <location filename="../../src/gui/editors/SongEditor.cpp" line="961"/>
@@ -15168,7 +15168,7 @@ Latency: %2 ms</source>
     <message>
         <location filename="../../src/gui/tracks/TrackOperationsWidget.cpp" line="308"/>
         <source>Assign to new Mixer Channel</source>
-        <translation>分配到新的混音器通道</translation>
+        <translation>分配到新的混音通道</translation>
     </message>
     <message>
         <location filename="../../src/gui/tracks/TrackOperationsWidget.cpp" line="320"/>
