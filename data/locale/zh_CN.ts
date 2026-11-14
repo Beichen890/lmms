@@ -12982,17 +12982,4 @@ Latency: %2 ms</source>
         <translation>显示图形界面</translation>
     </message>
 </context>
-<context>
-    <name>testcontext</name>
-    <message>
-        <source>test string</source>
-        <translation>测试字符串</translation>
-    </message>
-    <message numerus="yes">
-        <source>test plural %n</source>
-        <translation>
-            <numerusform>测试复数 %n</numerusform>
-        </translation>
-    </message>
-</context>
 </TS>
