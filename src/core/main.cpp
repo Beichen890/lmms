@@ -1305,7 +1305,14 @@ int main( int argc, char * * argv )
 	QString pos = ConfigManager::inst()->value( "app", "language" );
 	if( pos.isEmpty() )
 	{
-		pos = QLocale::system().name().left( 2 );
+		// Prefer the full locale name (e.g. zh_CN) when a matching
+		// translation exists, so regional variants are not ignored.
+		pos = QLocale::system().name();
+		const QString localeDir = ConfigManager::inst()->localeDir();
+		if( !QFileInfo::exists( QDir( localeDir ).filePath( pos + ".qm" ) ) )
+		{
+			pos = pos.left( 2 );
+		}
 	}
 
 	// load actual translation for LMMS
